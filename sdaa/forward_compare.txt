@@ -1,0 +1,41 @@
+=== float32 forward (SDAA vs CUDA) ===
+tensor         shape                 max_abs     mean_abs          rel  bitwise
+cpx_pos        (1070, 3)           0.000e+00    0.000e+00    0.000e+00      YES
+cpx_feature    (1070, 27)          0.000e+00    0.000e+00    0.000e+00      YES
+cpx_edge_index (2, 17120)          0.000e+00    0.000e+00    0.000e+00      YES
+h_cpx          (1070, 112)         2.384e-07    4.431e-09    8.494e-08       no
+h_enc          (1070, 112)         3.891e-05    6.682e-07    5.857e-06       no
+pivotal_prob   (1070,)             1.371e-06    6.987e-08    1.382e-06       no
+pos_abs        (1, 3, 3)           4.768e-07    1.060e-07    9.060e-09       no
+pos_pi         (1, 3)              6.706e-08    3.229e-08    1.264e-07       no
+pos_sigma      (1, 3, 3)           4.768e-07    2.715e-07    6.391e-07       no
+
+pivotal_prob: top1=0.991771 top2=0.991261 gap=5.096e-04
+Traceback (most recent call last):
+  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 54, in <module>
+    main()
+  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 49, in main
+    frac = float((gap < thr).sum()) / len(gap) if len(gap) else 0.0
+                                                  ^^^^^^^^
+TypeError: object of type 'numpy.float64' has no len()
+
+=== float64 forward (SDAA vs CUDA) ===
+tensor         shape                 max_abs     mean_abs          rel  bitwise
+cpx_pos        (1070, 3)           0.000e+00    0.000e+00    0.000e+00      YES
+cpx_feature    (1070, 27)          0.000e+00    0.000e+00    0.000e+00      YES
+cpx_edge_index (2, 17120)          0.000e+00    0.000e+00    0.000e+00      YES
+h_cpx          (1070, 112)         4.441e-16    1.417e-17    1.582e-16       no
+h_enc          (1070, 112)         5.145e-13    8.395e-15    7.744e-14       no
+pivotal_prob   (1070,)             2.626e-14    9.316e-16    2.647e-14       no
+pos_abs        (1, 3, 3)           7.105e-15    4.984e-15    1.350e-16       no
+pos_pi         (1, 3)              1.388e-15    9.113e-16    2.616e-15       no
+pos_sigma      (1, 3, 3)           1.010e-14    4.046e-15    1.354e-14       no
+
+pivotal_prob: top1=0.991771 top2=0.991261 gap=5.098e-04
+Traceback (most recent call last):
+  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 54, in <module>
+    main()
+  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 49, in main
+    frac = float((gap < thr).sum()) / len(gap) if len(gap) else 0.0
+                                                  ^^^^^^^^
+TypeError: object of type 'numpy.float64' has no len()
