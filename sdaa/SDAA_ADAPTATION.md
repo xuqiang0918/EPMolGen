@@ -4,20 +4,43 @@
 
 官方推理脚本 `sample_main.py` 在 SDAA 上直接可跑，5 个生成分子全部有效（`Validity 1.0000` / `Unique 1.0000`）。
 
-与 CUDA（A100）对照：SDAA 慢 **12.9×**（16.13 s/分子 对 1.25 s/分子），峰值显存 153.6 MiB 对 68.1 MiB，生成质量（仓库自带的 Validity / Unique）处于同一量级。
+与 CUDA（A100）对照：SDAA 慢 **13.2×**（16.53 s/分子 对 1.25 s/分子），峰值显存 152.6 MiB 对 68.1 MiB；生成质量一致——两边 Validity 0.71 对 0.73，逐分子相同率 42.3%。
 
 性能差距的主因不在卡算力：每加一个原子都要在 CPU 侧重建 KNN 图（`GraphCompose`，16 进程）+ RDKit 建分子，真正上卡的 forward 只有几百个节点；SDAA 与本机 CPU（27.1 s/分子）也基本同速。
+
+## 随机数对齐
+
+生成模型的对齐必须处理两处随机源，缺一不可：
+
+| 随机源 | 位置 | 处理 |
+| --- | --- | --- |
+| 设备端 uniform / normal | `torch.multinomial`、`torch.rand`、先验采样 | SDAA 侧设 `TORCH_SDAA_ALIGN_NV_DEVICE=a100`，与 CUDA 的 Philox 对齐 |
+| 主机端 numpy | `EPMolGen/sample.py:27` 的 `np.random.randint` 决定每个分子的原子数 | 评测脚本里按 case 调 `np.random.seed()` |
+
+**`TORCH_SDAA_ALIGN_NV_DEVICE=a100` 实测有效**（同一 seed=1234，`torch.manual_seed` 后取样）：
+
+| 取样 | SDAA 不对齐 | SDAA 对齐 a100 | CUDA (A100) |
+| --- | --- | --- | --- |
+| `torch.rand(16)` | 与 CUDA 完全不同 | **与 CUDA 逐位相同** | 基准 |
+| `torch.randn(16)` | 与 CUDA 完全不同 | 与 CUDA 相同（差在 float32 末位 ~1e-7） | 基准 |
+| `torch.randint(16)` | — | 与 CUDA **不同** | 基准 |
+| `torch.normal(16)` | — | 与 CUDA **不同**（SDAA 给的是 CUDA `randn(4,8)` 的前 16 个） | 基准 |
+
+即 uniform 路径对齐了，int64 与 `normal_` 路径没有。EPMolGen 的先验采样走 `torch.distributions.Normal`（即 `normal_`），`torch.multinomial` 消耗的均匀数序列也可能因此错位，这是跨平台仍有 42.3% 分子不一致的直接原因。
+
+**numpy 播种是必须的**：仓库代码从不播种 numpy，而每个分子的原子数就来自 `np.random.randint`，不播种则**同一平台两次运行都不可复现**。播种后实测：同一平台重跑两次，73 个分子 **100% 逐个相同**。
 
 ## 环境
 
 | 项 | SDAA 侧 | CUDA 对照侧 |
 | --- | --- | --- |
-| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） | 10.10.6.21（AMD EPYC 7453，A100-PCIE-40GB） |
+| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） | 10.10.6.21（AMD EPYC 7453，A100-PCIE-40GB，共享机） |
 | 容器 | `sdaa`（镜像 `3.2.1-torch_sdaa3.2.1`） | 无（直接用宿主 conda env） |
 | Python | `/home/py312/bin/python3`（3.12.13） | `anaconda3/envs/surf/bin/python`（3.10.21） |
 | torch | 2.12.0 / Torch-SDAA 3.2.1 | 2.4.1+cu121 |
 | 设备 | `sdaa:0`（单核组 16 GiB） | `cuda:0`（A100 40 GB） |
 | 仓库 | `/data/application/xuqiang/EPMolGen`，分支 `adapt/sdaa` | `/data/application/xuqiang/EPMolGen_cuda`（同一份工作树） |
+| RNG | `TORCH_SDAA_ALIGN_NV_DEVICE=a100` | 默认（Philox） |
 
 SDAA 侧依赖全部用容器自带，**未额外安装任何包**：`torch_scatter 2.1.2`、`torch_cluster 1.6.3`、`torch_sparse 0.6.18`、`pyg_lib 0.7.0`、`pymol`、`rdkit`，PyG 2.8.0.post1（仓库 `requirements.txt` 钉 2.5.3）。
 
@@ -39,8 +62,9 @@ patch 归档在 `sdaa/patches/`，3 个 commit 按平台适配 / 通用修复分
 ## 运行
 
 ```bash
-# SDAA
-docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang sdaa bash -c \
+# SDAA（注意 RNG 对齐变量）
+docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang \
+  -e TORCH_SDAA_ALIGN_NV_DEVICE=a100 sdaa bash -c \
   'source /opt/tecoai/setvars.sh; cd /data/application/xuqiang/EPMolGen && \
    /home/py312/bin/python3 -u sample_main.py --device sdaa:0 --molecule_number 5'
 
@@ -63,57 +87,53 @@ Validity: 1.0000
 Unique: 1.0000
 ```
 
-CUDA 同样 5 个分子、`Validity 1.0000` / `Unique 1.0000`，耗时 13 s（SDAA 112 s）。采样为逐原子随机过程，未设随机种子，每次生成的分子不同。
+CUDA 同样 5 个分子、`Validity 1.0000` / `Unique 1.0000`，耗时 13 s（SDAA 112 s）。官方脚本不播种任何 RNG，每次运行结果都不同。
 
 ## 性能与显存
 
 | 指标 | SDAA | CUDA (A100) | 倍数 |
 | --- | --- | --- | --- |
 | 官方 CLI（5 分子，含准备与加载） | 112 s | 13 s | 8.6× |
-| 生成阶段（`sdaa/scripts/bench_infer.py`，5 分子） | 22.9 s/分子 | 1.3 s/分子 | 17.6× |
-| 数据集 10 口袋 × 10 分子 | 16.13 s/分子 | 1.25 s/分子 | 12.9× |
-| 峰值显存（10 口袋最大） | 153.6 MiB | 68.1 MiB | 2.3× |
+| 数据集 10 口袋 × 10 分子 | 16.53 s/分子 | 1.25 s/分子 | 13.2× |
+| 峰值显存（10 口袋最大） | 152.6 MiB | 68.1 MiB | 2.2× |
 | 同机 CPU 对照 | 27.1 s/分子 | — | — |
 
-单分子耗时随原子数变化（SDAA 侧 10 原子 10.6 s、28 原子 30.1 s）。SDAA 相对本机 CPU 仅 1.18×，说明瓶颈在 CPU 侧。论文报告 RTX 4090 上 0.7 s/分子。
+CUDA 侧是共享机，耗时随宿主 CPU 负载变化：load 4.3 时 1.25 s/分子，load 79 时同一脚本 4.59 s/分子（GPU 利用率始终 0%，瓶颈全在 CPU 侧）。SDAA 侧是独占机。
+
+单分子耗时随原子数变化（SDAA 侧 10 原子 10.6 s、28 原子 30.1 s）。SDAA 相对本机 CPU 仅 1.18×。论文报告 RTX 4090 上 0.7 s/分子。
 
 ## 精度
 
-生成是随机过程，没有预测值可对；两平台即使同种子也生成不同分子（RNG 实现不同），无法逐分子比对，只能做分布级统计。指标用仓库自己写的 `Generate.generate()`，即 `metrics.dir` 里的 Validity / Unique。
+数据集用仓库自带的 `Ten_test_cases`（10 个口袋），每个口袋 10 个分子共 100 个，seed 1234（`torch.manual_seed` + `np.random.seed`，逐 case 加索引），SDAA 侧开 RNG 对齐。指标用仓库自己写的 `Generate.generate()`，即 `metrics.dir` 里的 Validity / Unique。
 
-数据集用仓库自带的 `Ten_test_cases`（10 个口袋），每个口袋生成 10 个分子，共 100 个：
+| 口袋 | SDAA 有效 | CUDA 有效 | 逐分子相同 | SDAA s/分子 | CUDA s/分子 | SDAA 峰值 MiB | CUDA 峰值 MiB |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1bvr | 9/10 | 9/10 | 6/9 | 19.22 | 1.33 | 122.1 | 56.5 |
+| 1u0f | 10/10 | 10/10 | 7/10 | 14.98 | 1.13 | 89.1 | 45.0 |
+| 1zyu | 9/10 | 10/10 | 2/9 | 18.70 | 1.26 | 122.0 | 56.4 |
+| 2ah9 | 9/10 | 9/10 | 1/9 | 23.30 | 1.47 | 152.6 | 68.1 |
+| 2ati | 8/10 | 9/10 | 4/8 | 15.72 | 1.28 | 96.9 | 47.7 |
+| 2hw1 | 7/10 | 5/10 | 1/7 | 15.83 | 1.24 | 95.5 | 46.6 |
+| 4bnw | 2/10 | 3/10 | 2/2 | 17.89 | 1.41 | 106.7 | 50.9 |
+| 4i91 | 5/10 | 6/10 | 5/5 | 11.77 | 1.01 | 76.1 | 40.0 |
+| 5g3n | 4/10 | 4/10 | 0/4 | 14.26 | 1.14 | 86.2 | 42.9 |
+| 5lvq | 8/10 | 8/10 | 2/8 | 13.60 | 1.20 | 79.0 | 40.7 |
+| **合计** | **71/100（0.71）** | **73/100（0.73）** | **30/71（42.3%）** | **16.53** | **1.25** | **152.6** | **68.1** |
 
-| 口袋 | SDAA 有效 | CUDA 有效 | SDAA s/分子 | CUDA s/分子 | SDAA 峰值 MiB | CUDA 峰值 MiB |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1bvr | 8/10 | 9/10 | 19.77 | 1.24 | 123.3 | 56.6 |
-| 1u0f | 10/10 | 10/10 | 14.46 | 1.18 | 90.1 | 45.0 |
-| 1zyu | 9/10 | 10/10 | 18.58 | 1.25 | 123.1 | 56.4 |
-| 2ah9 | 9/10 | 7/10 | 23.34 | 1.59 | 153.6 | 68.1 |
-| 2ati | 8/10 | 4/10 | 15.39 | 1.25 | 97.9 | 47.7 |
-| 2hw1 | 8/10 | 7/10 | 15.57 | 1.20 | 96.5 | 46.6 |
-| 4bnw | 7/10 | 2/10 | 17.17 | 1.21 | 107.7 | 50.9 |
-| 4i91 | 8/10 | 3/10 | 8.31 | 1.10 | 77.1 | 40.1 |
-| 5g3n | 4/10 | 8/10 | 14.49 | 1.29 | 87.3 | 43.0 |
-| 5lvq | 9/10 | 8/10 | 14.22 | 1.15 | 80.0 | 40.7 |
-| **合计** | **80/100（0.80）** | **68/100（0.68）** | **16.13** | **1.25** | **153.6** | **68.1** |
+Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
 
-Unique：SDAA 78/80（0.975）、CUDA 68/68（1.000）。
+结论：
 
-两个差异最大的口袋把样本加大到每案 30 个分子：
+1. **总体质量一致**：Validity 0.71 对 0.73，差 2 个分子，逐案差 ≤2。残余差异来自两平台 `normal_` / `multinomial` 的随机流映射不同（见「随机数对齐」），不是数值精度问题。
+2. **可复现**：同一平台（CUDA）同种子重跑两次，73 个分子 100% 逐个相同；未播种 numpy 时连这一点都不成立。
+3. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
 
-| 口袋 | SDAA | CUDA |
-| --- | --- | --- |
-| 2ati | 30/30（1.000） | 23/30（0.767） |
-| 4bnw | 12/30（0.400） | 13/30（0.433） |
-| 合计 | 42/60（0.700） | 36/60（0.600） |
-
-**判定**：n=10 时单个口袋的 Validity 自身波动就很大（同一口袋 CUDA 两次跑出 0.4 与 0.767）；n=30 时两平台差异方向不一致（2ati SDAA 高、4bnw SDAA 低）；n=100 的整体差 0.80 对 0.68 落在 1.4σ 内。因此**没有证据表明 SDAA 与 CUDA 存在系统性质量差异**，本次对照不足以判定更小的偏差。
-
-原始数据：`sdaa/scripts/results_dataset_sdaa.csv`、`results_dataset_sdaa30.csv`、`results_dataset_cuda.csv`、`results_dataset_cuda30.csv`；日志在 `sdaa/logs/`。
+原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`、`results_dataset_cuda_run2.csv`、`smiles_sdaa.txt`、`smiles_cuda.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`。
 
 ## 已知限制
 
-- **加速有限**：SDAA 比 CUDA 慢 12.9×，比本机 CPU 仅快 1.18×。要真正吃到加速需把逐分子串行改成批量生成（一次 forward 出 N 个候选），属采样逻辑改造，不是适配能解决的。
+- **加速有限**：SDAA 比 CUDA 慢 13.2×，比本机 CPU 仅快 1.18×。要真正吃到加速需把逐分子串行改成批量生成（一次 forward 出 N 个候选），属采样逻辑改造，不是适配能解决的。
+- **跨平台只做到 uniform 对齐**：`torch.randint` 与 `torch.normal` 的随机流两平台不同，逐分子一致率停在 42.3%；要再往上得改上游采样实现（先验采样避开 `Normal.rsample`、改用显式 uniform 组合）。
 - **训练路径未适配**：`pretraining.py` / `finetuning.py` 里的 `torch.cuda.amp` 与硬编码 `cuda:0` 未动。
 - **PyG 版本**：仓库钉 2.5.3，SDAA 侧是 2.8.0.post1、CUDA 侧 2.6.1；`knn` 的 batch 索引类型要求已按 2.8 修正（2.6 同样接受整型）。
 - `sample_main.py` 顶部的 `CUDA_LAUNCH_BLOCKING` / `CUDA_VISIBLE_DEVICES` 未改：torch 在其之前已 import，两个变量本就不生效。

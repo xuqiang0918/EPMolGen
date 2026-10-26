@@ -1,0 +1,115 @@
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+--------------+--------------------------------------------
+ Host IP      | 10.71.123.51
+ PyTorch      | 2.12.0
+ Torch-SDAA   | 3.2.1
+--------------+--------------------------------------------
+ SDAA Driver  | 3.2.0 (N/A)
+ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
+ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
+ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
+ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
+ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
+ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
+ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
+--------------+--------------------------------------------
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
+  n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
+/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
+  ix_class = int(re.search('\d+', p)[0]) - 1
+device=sdaa:0  cases=10  molecules/case=10  seed=1234
+warning: driver api and driver versions are different
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+model device: sdaa:0
+rng align_nv_device: True  (TORCH_SDAA_ALIGN_NV_DEVICE=a100)
+/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+Invalid mol:  CCCCC=C1C=C(C(N)=O)CC(C(C)C=CCl)C1
+9
+9
+Validity: 0.9000
+Unique: 1.0000
+[ 1/10] 1bvr   valid=9/10 unique=9 heavy_atoms=17.0 wall=192.2s (19.22s/mol) peak=122.1MiB
+10
+10
+Validity: 1.0000
+Unique: 1.0000
+[ 2/10] 1u0f   valid=10/10 unique=10 heavy_atoms=18.5 wall=149.8s (14.98s/mol) peak=89.1MiB
+Invalid mol:  NC1=NCC2C=C(O)C=C(NC(=O)CCO)C2C1
+9
+9
+Validity: 0.9000
+Unique: 1.0000
+[ 3/10] 1zyu   valid=9/10 unique=9 heavy_atoms=17.4 wall=187.0s (18.70s/mol) peak=122.0MiB
+Invalid mol:  CC1C=CC2C(C=CC3C2C=CC2C=CCCC23)C1
+9
+9
+Validity: 0.9000
+Unique: 1.0000
+[ 4/10] 2ah9   valid=9/10 unique=9 heavy_atoms=18.3 wall=233.0s (23.30s/mol) peak=152.6MiB
+Invalid mol:  C=C(C)C1=CC=CC(CC=CCCCN=O)C1=N
+Invalid mol:  CC=CC=C1C=CC(C2C=CC(C=CC)C=C2)=CC1
+8
+8
+Validity: 0.8000
+Unique: 1.0000
+[ 5/10] 2ati   valid=8/10 unique=8 heavy_atoms=17.9 wall=157.2s (15.72s/mol) peak=96.9MiB
+Invalid mol:  CCCN=C1C=C2C=CC3C=C(Cl)C=CC3C2C(=O)C1
+Invalid mol:  CC(=NC1CC=C(C(N)=O)CC1=N)C1CC=CC1C
+Invalid mol:  O=CCCCC=C1CC=CC2C=CC=CC12
+7
+7
+Validity: 0.7000
+Unique: 1.0000
+[ 6/10] 2hw1   valid=7/10 unique=7 heavy_atoms=18.3 wall=158.3s (15.83s/mol) peak=95.5MiB
+Invalid mol:  CC1=CC2C(=C(C3=CC=CC=C3)C=CC2C)CN1
+Invalid mol:  C=CC(C)C1C=NC2=C(C1)C(CCCC)=C(C)C=C2
+Invalid mol:  CC(=O)C1CCC2=C(C1)C(C(=O)O)C(=O)C(C)=N2
+Invalid mol:  C=C1CCC(C)C2=CC(C3=CC(Cl)=CC=C3)=CCC12
+Invalid mol:  NC(=O)CCNC(=O)C1=C(Br)C(N)=CC2C=CC=CC12
+Invalid mol:  CC=CC1=CC(C(=O)O)NC2C=CC(C(=O)O)CC12
+Invalid mol:  CCCCCC1=C(Cl)C=CC2=C1CCC(Cl)=C2CCC
+Invalid mol:  ClC1=CC2=C(C=C1)C1C3=CC=CCC3C=CC1C=C2
+2
+2
+Validity: 0.2000
+Unique: 1.0000
+[ 7/10] 4bnw   valid=2/10 unique=2 heavy_atoms=18.5 wall=178.9s (17.89s/mol) peak=106.7MiB
+Invalid mol:  CCCOC1=C(O)C(=O)CC2=C1C=C(Br)C(F)=C2
+Invalid mol:  OC1=CC(C2=CC3=C(C=C2)C=C(Cl)C=C3)=CC=C1
+Invalid mol:  C=CCCCCC1=CC=C2N=C(C)NCC2C1=O
+Invalid mol:  CCC(C)C(C)C1=CC=C2C=C(C(C)Br)C=CC2C1
+Invalid mol:  O=C1C=CC=C(C=C2C=CC3C=CC(Cl)=CC3N2)C1
+5
+5
+Validity: 0.5000
+Unique: 1.0000
+[ 8/10] 4i91   valid=5/10 unique=5 heavy_atoms=13.4 wall=117.7s (11.77s/mol) peak=76.1MiB
+Invalid mol:  CC1=C(C)C2CC=CC=C2C(CC2C=CC=CC2)N1
+Invalid mol:  N=CC1=C(N)C2C=CCC(C3=CC=CC=C3)C2C=C1
+Invalid mol:  C=CC(C)C1=CCCC2=C1C=C(CCC)N=C2
+Invalid mol:  CC1=C(O)C2C=C(I)CCC2C2=C1C=CC(Cl)=C2
+Invalid mol:  CCC1=CC2C(=C(C)C(C)C3C=CC=C(C)C23)C=C1
+Invalid mol:  CC=CC(=CC)C1C=C2CNN=C(N)C2=CC1=O
+4
+4
+Validity: 0.4000
+Unique: 1.0000
+[ 9/10] 5g3n   valid=4/10 unique=4 heavy_atoms=18.2 wall=142.6s (14.26s/mol) peak=86.2MiB
+Invalid mol:  CC1C=CC2C=CC(C3=CC=C(O)C=C3)C=C2C1
+Invalid mol:  CC1C=CC2=CC=CC(CC3=CC=C(Cl)CC3)C2C1
+8
+8
+Validity: 0.8000
+Unique: 1.0000
+[10/10] 5lvq   valid=8/10 unique=8 heavy_atoms=18.6 wall=136.0s (13.60s/mol) peak=79.0MiB
+
+--- dataset summary (sdaa:0) ---
+cases            : 10
+molecules        : 100 (valid 71, overall validity 0.7100)
+unique           : 71 (overall unique rate 1.0000)
+total wall       : 1652.7 s (16.53 s/molecule)
+peak mem (max)   : 152.6 MiB
+csv              : sdaa/scripts/results_dataset_sdaa_align.csv
+smiles           : /data/application/xuqiang/EPMolGen/sdaa/scripts/smiles_sdaa.txt (71 lines)

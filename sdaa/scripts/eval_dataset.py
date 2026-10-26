@@ -19,6 +19,7 @@ import re
 import sys
 import time
 
+import numpy as np
 import torch
 from rdkit import Chem, RDLogger
 
@@ -83,10 +84,21 @@ def main():
     model = epmolgen(ckpt["config"]).to(device)
     model.load_state_dict(ckpt["model"])
     print("model device: %s" % next(model.parameters()).device, flush=True)
+    try:
+        import torch_sdaa
+        print("rng align_nv_device: %s  (TORCH_SDAA_ALIGN_NV_DEVICE=%s)"
+              % (torch_sdaa.backend.random.random_align_nv_device(),
+                 os.environ.get("TORCH_SDAA_ALIGN_NV_DEVICE")), flush=True)
+    except Exception:
+        pass
 
     rows = []
+    smiles_all = []
     for idx, (name, pdb, topo) in enumerate(cases):
         torch.manual_seed(args.seed + idx)
+        # the per-molecule atom count comes from numpy's global RNG (EPMolGen/sample.py:27),
+        # so numpy has to be seeded as well, otherwise runs are not reproducible at all
+        np.random.seed(args.seed + idx)
         t0 = time.time()
         cpx, graph_compose = build_complex(pdb, topo)
         sample = Generate(
@@ -129,6 +141,8 @@ def main():
             "out_dir": out_dir,
         }
         rows.append(row)
+        for s in smiles:
+            smiles_all.append("%s\t%s" % (name, s))
         print("[%2d/%2d] %-6s valid=%d/%d unique=%d heavy_atoms=%.1f wall=%.1fs (%.2fs/mol) peak=%.1fMiB"
               % (idx + 1, len(cases), name, row["valid"], row["requested"], row["unique"],
                  row["heavy_atoms_avg"], row["wall_s"], row["s_per_mol"], row["peak_mem_MiB"]),
@@ -154,6 +168,11 @@ def main():
         w.writeheader()
         w.writerows(rows)
     print("csv              : %s" % csv_path)
+
+    smi_path = os.path.join(HERE, "smiles_%s.txt" % torch.device(args.device).type)
+    with open(smi_path, "w") as f:
+        f.write("\n".join(smiles_all) + "\n")
+    print("smiles           : %s (%d lines)" % (smi_path, len(smiles_all)))
 
 
 if __name__ == "__main__":
