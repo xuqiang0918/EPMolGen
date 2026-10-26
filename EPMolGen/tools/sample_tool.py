@@ -358,7 +358,17 @@ def modify(mol, max_double_in_6ring=0):
             continue
         atoms = [mw.GetAtomWithIdx(i) for i in sub]
         for a in atoms:
-            if a.GetExplicitValence()==MAX_VALENCE[a.GetSymbol()] and a.GetHybridization().__str__()=='SP3':
+            # RDKit >= 2025 raises here when the bond surgery above invalidated the
+            # cached valence; recompute it and fall back to an undefined valence.
+            try:
+                valence = a.GetExplicitValence()
+            except RuntimeError:
+                try:
+                    a.UpdatePropertyCache(strict=False)
+                    valence = a.GetExplicitValence(allowUndefined=True)
+                except Exception:
+                    valence = -1
+            if valence==MAX_VALENCE[a.GetSymbol()] and a.GetHybridization().__str__()=='SP3':
                 break
         else:
             bond_type = [mw.GetBondBetweenAtoms(*b).GetBondType().__str__() for b in bond_list]
