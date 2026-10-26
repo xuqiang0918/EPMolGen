@@ -431,8 +431,7 @@ class Generate(object):
             self.num_atom_max = sample_atom_num([10,28], distribution='normal')
             data_clone = data.clone().detach()
             out = self.run(data_clone)
-            if out:
-                mol, _ = out
+            mol = out[0] if out else None
             del data_clone
             if mol is not None:
                 #print(len(mol.GetAtoms()))

@@ -40,21 +40,16 @@ if __name__ == '__main__':
         args.name = args.pocket.split('/')[-1].split('-')[0]
 ###################    For your convenience, you can test your code by implemented it here    ##############################
     #args.pocket = './YTHDC2/6k6u_pocket10.pdb' 
-    args.pocket = '/export/home/yangzhenyu/EPMolGen/Ten_test_cases/1bvr/1bvr_pocket10.pdb'
-    args.ckpt = '/export/home/yangzhenyu/EPMolGen/model_ckpt.pt'
-    args.choose_max = 0
-    #args.molecule_number = 5000
-    args.molecule_number = 10000
-    args.print_SMILES = True
+    # demo defaults, applied only when the matching CLI argument is absent
+    if args.pocket == 'None':
+        args.pocket = './Ten_test_cases/1bvr/1bvr_pocket10.pdb'
+        args.topo = './Ten_test_cases/1bvr/1bvr_topo.dict'
+        args.name = '1bvr'
+    if args.ckpt.strip() == '':
+        args.ckpt = './model_ckpt.pt'
     args.choose_max = 1
     args.temp_atom = 1.0
     args.temp_bond = 1.0
-    #args.name = 'YTHDC2' 
-    args.name = '1bvr'
-    args.root_path = 'gen_results' 
-    args.device = 'cuda:0'
-    #args.topo = './YTHDC2/6k6u_topo.dict'
-    args.topo = '/export/home/yangzhenyu/EPMolGen/Ten_test_cases/1bvr/1bvr_topo.dict'
 ###################      For your convenience, you can test your code by implemented it here      ##############################
     ## Load Target
     assert args.pocket != 'None', 'Please specify pocket !'
@@ -82,7 +77,7 @@ if __name__ == '__main__':
 
     ## Load model
     print('Loading model ...')
-    ckpt = torch.load(args.ckpt, map_location=device)
+    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
     config = ckpt['config']
     model = epmolgen(config).to(device)
     model.load_state_dict(ckpt['model'])
