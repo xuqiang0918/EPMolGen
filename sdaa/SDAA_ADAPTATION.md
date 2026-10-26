@@ -122,13 +122,36 @@ CUDA 侧是共享机，耗时随宿主 CPU 负载变化：load 4.3 时 1.25 s/�
 
 Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
 
+### 具体理化指标
+
+仓库只输出 Validity / Unique，没有官方评价脚本，故用 RDKit 标准描述符补一套（`sdaa/scripts/metrics_desc.py`，两平台分子在同一份 rdkit 上算，输出存 `sdaa/metrics_desc.txt`）：
+
+| 指标 | SDAA（71 个分子） | CUDA（73 个分子） | 差 |
+| --- | --- | --- | --- |
+| QED | 0.588 ± 0.165 | 0.616 ± 0.167 | −4.6% |
+| SA score | 3.101 ± 1.078 | 2.989 ± 1.109 | +3.7% |
+| logP (Crippen) | 3.336 ± 2.023 | 3.233 ± 1.919 | +3.2% |
+| TPSA | 41.12 ± 40.03 | 47.35 ± 40.77 | −13.2% |
+| MW | 258.4 ± 47.9 | 260.4 ± 47.3 | −0.8% |
+| 重原子数 | 17.70 ± 2.62 | 17.85 ± 2.54 | −0.8% |
+| HBD | 0.915 ± 1.118 | 1.164 ± 1.131 | −21.4% |
+| HBA | 2.085 ± 1.857 | 2.192 ± 1.920 | −4.9% |
+| 可旋转键 | 4.97 ± 2.37 | 5.06 ± 2.26 | −1.6% |
+| 环数 | 1.465 ± 0.734 | 1.466 ± 0.668 | −0.1% |
+| 芳香环数 | 0.986 ± 0.853 | 1.055 ± 0.780 | −6.5% |
+| Fsp3 | 0.400 ± 0.236 | 0.371 ± 0.236 | +8.0% |
+
+每一项的均值差都远小于自身标准差（QED 差 0.028 对 σ 0.165，SA 差 0.11 对 σ 1.08），**两平台生成分子的理化性质无实质差异**。
+
+仓库自带的环统计（`EPMolGen/tools/static_ring.py: substructure`）也一致：六元环占比 SDAA 0.887 / CUDA 0.918，五元环 0.028 / 0.014，七元环 0.028 / 0.041，八元环 0 / 0.014，SSSR 均为 1。
+
 结论：
 
 1. **总体质量一致**：Validity 0.71 对 0.73，差 2 个分子，逐案差 ≤2。残余差异来自两平台 `normal_` / `multinomial` 的随机流映射不同（见「随机数对齐」），不是数值精度问题。
 2. **可复现**：同一平台（CUDA）同种子重跑两次，73 个分子 100% 逐个相同；未播种 numpy 时连这一点都不成立。
 3. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
 
-原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`（SDAA）、`results_dataset_cuda_run2.csv`（CUDA）、`smiles_sdaa.txt`、`smiles_cuda.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`。同目录下 `results_dataset_sdaa.csv` / `results_dataset_cuda.csv` / `*_30.csv` 是未对齐 RNG、未播种 numpy 的那轮旧数据，已作废，仅留档。
+原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`（SDAA）、`results_dataset_cuda_run2.csv`（CUDA）、`smiles_sdaa.txt`、`smiles_cuda.txt`；指标输出 `sdaa/metrics_desc.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`、`sdaa/scripts/metrics_desc.py`。同目录下 `results_dataset_sdaa.csv` / `results_dataset_cuda.csv` / `*_30.csv` 是未对齐 RNG、未播种 numpy 的那轮旧数据，已作废，仅留档。
 
 ## 已知限制
 
