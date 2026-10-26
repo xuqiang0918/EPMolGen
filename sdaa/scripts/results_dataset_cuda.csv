@@ -1,0 +1,11 @@
+case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
+1bvr,10,9,9,0.9,1.0,18.0,12.4,1.24,56.6,gen_results_dataset_cuda/1bvr/2026-10-26-11-28-20
+1u0f,10,10,10,1.0,1.0,18.5,11.8,1.18,45.0,gen_results_dataset_cuda/1u0f/2026-10-26-11-28-33
+1zyu,10,10,10,1.0,1.0,17.8,12.5,1.25,56.4,gen_results_dataset_cuda/1zyu/2026-10-26-11-28-44
+2ah9,10,7,7,0.7,1.0,18.3,15.9,1.59,68.1,gen_results_dataset_cuda/2ah9/2026-10-26-11-28-57
+2ati,10,4,4,0.4,1.0,18.0,12.5,1.25,47.7,gen_results_dataset_cuda/2ati/2026-10-26-11-29-13
+2hw1,10,7,7,0.7,1.0,17.7,12.0,1.2,46.6,gen_results_dataset_cuda/2hw1/2026-10-26-11-29-25
+4bnw,10,2,2,0.2,1.0,19.0,12.1,1.21,50.9,gen_results_dataset_cuda/4bnw/2026-10-26-11-29-37
+4i91,10,3,3,0.3,1.0,13.0,11.0,1.1,40.1,gen_results_dataset_cuda/4i91/2026-10-26-11-29-49
+5g3n,10,8,8,0.8,1.0,17.8,12.9,1.29,43.0,gen_results_dataset_cuda/5g3n/2026-10-26-11-30-00
+5lvq,10,8,8,0.8,1.0,17.9,11.5,1.15,40.7,gen_results_dataset_cuda/5lvq/2026-10-26-11-30-13

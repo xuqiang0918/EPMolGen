@@ -1,0 +1,35 @@
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+--------------+--------------------------------------------
+ Host IP      | 10.71.123.51
+ PyTorch      | 2.12.0
+ Torch-SDAA   | 3.2.1
+--------------+--------------------------------------------
+ SDAA Driver  | 3.2.0 (N/A)
+ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
+ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
+ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
+ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
+ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
+ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
+ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
+--------------+--------------------------------------------
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
+  n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
+/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
+  ix_class = int(re.search('\d+', p)[0]) - 1
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+Loading model ...
+warning: driver api and driver versions are different
+Generating molecules ...
+/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+CCC(=O)Nc1c(O)ccc(-c2cccnc2)c1
+CCCCc1ccc(CNc2ccccc2)cc1
+CC=CCC=Cc1ncc(-c2ccc(CC)cc2)cc1
+CCC=CC1CCN(Sc2c(C)ccc(C)c2)CC1
+CC(C)COC(CO)C(C)CC=CC(=N)[PH](=O)O
+5
+5
+Validity: 1.0000
+Unique: 1.0000

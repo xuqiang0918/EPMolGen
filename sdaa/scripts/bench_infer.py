@@ -18,7 +18,9 @@ from rdkit import Chem, RDLogger
 
 RDLogger.DisableLog("rdApp.*")
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..")))
+sys.path.insert(0, HERE)
 
 from EPMolGen import epmolgen, Generate  # noqa: E402
 from EPMolGen.tools import *  # noqa: F401,F403,E402
