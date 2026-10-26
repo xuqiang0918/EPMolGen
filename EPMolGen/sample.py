@@ -339,7 +339,7 @@ class Generate(object):
                     if new_pos_to_add is False:
                         self.resample_node += 1
                         continue
-                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to(self.device)    
+                    data.step_batch = torch.zeros(data.cpx_pos.size(0), dtype=torch.long).to(self.device)    
                     #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to(self.device))
                     edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to(self.device))
                     sca_pos, vec_pos = elect_field(data.cpx_pos[edge_index_1], data.cpx_charge[edge_index_1], new_pos_to_add[edge_index_0])
