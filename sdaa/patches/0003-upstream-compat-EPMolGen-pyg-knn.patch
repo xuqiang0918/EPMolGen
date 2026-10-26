@@ -1,0 +1,26 @@
+From 3d7f5e7f17da9a6689b9c25f1130c7011f48c4bd Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 11:06:24 +0800
+Subject: [PATCH 3/3] [upstream] sample: pass integer batch indices to PyG knn
+ (required by PyG >= 2.8)
+
+---
+ EPMolGen/sample.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/EPMolGen/sample.py b/EPMolGen/sample.py
+index d4839b2..0b13d4e 100644
+--- a/EPMolGen/sample.py
++++ b/EPMolGen/sample.py
+@@ -339,7 +339,7 @@ class Generate(object):
+                     if new_pos_to_add is False:
+                         self.resample_node += 1
+                         continue
+-                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to(self.device)    
++                    data.step_batch = torch.zeros(data.cpx_pos.size(0), dtype=torch.long).to(self.device)    
+                     #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to(self.device))
+                     edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to(self.device))
+                     sca_pos, vec_pos = elect_field(data.cpx_pos[edge_index_1], data.cpx_charge[edge_index_1], new_pos_to_add[edge_index_0])
+-- 
+2.41.0
+

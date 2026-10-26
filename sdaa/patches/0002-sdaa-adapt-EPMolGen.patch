@@ -1,0 +1,56 @@
+From 4b92e1a9f6bc5c0fdb4d8de00c54b5f0aac76847 Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 11:06:23 +0800
+Subject: [PATCH 2/3] [sdaa-adapt] sample: replace cuda-only
+ .cuda()/.to("cuda:0") with device-agnostic .to()
+
+---
+ EPMolGen/sample.py | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/EPMolGen/sample.py b/EPMolGen/sample.py
+index 1138ed7..d4839b2 100644
+--- a/EPMolGen/sample.py
++++ b/EPMolGen/sample.py
+@@ -273,12 +273,12 @@ class Generate(object):
+         data = data.to(self.device)
+         with torch.no_grad():
+             self.prior_node = torch.distributions.normal.Normal(
+-                    torch.zeros([len(self.atom_type_map)]).cuda(data.cpx_pos.device), 
+-                    self.temperature[0] * torch.ones([len(self.atom_type_map)]).cuda(data.cpx_pos.device)
++                    torch.zeros([len(self.atom_type_map)]).to(data.cpx_pos.device), 
++                    self.temperature[0] * torch.ones([len(self.atom_type_map)]).to(data.cpx_pos.device)
+                     )
+             self.prior_edge = torch.distributions.normal.Normal(
+-                    torch.zeros([self.num_bond_type]).cuda(data.cpx_pos.device), 
+-                    self.temperature[1] * torch.ones([self.num_bond_type]).cuda(data.cpx_pos.device)
++                    torch.zeros([self.num_bond_type]).to(data.cpx_pos.device), 
++                    self.temperature[1] * torch.ones([self.num_bond_type]).to(data.cpx_pos.device)
+                     )
+             begin_atom_idx = 0 + data.idx_ligand_ctx_in_cpx.size(0)
+             rw_mol = Chem.RWMol()
+@@ -298,7 +298,7 @@ class Generate(object):
+                         l_.append(b2)
+             
+             self.counter = 0
+-            #new_pos_traj = torch.empty(1,3).to('cuda:0')
++            #new_pos_traj = torch.empty(1,3).to(self.device)
+             for atom_idx in range(begin_atom_idx, self.num_atom_max):
+                 data = data.to(self.device)
+                 h_cpx = embed_compose(
+@@ -339,9 +339,9 @@ class Generate(object):
+                     if new_pos_to_add is False:
+                         self.resample_node += 1
+                         continue
+-                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to('cuda:0')    
+-                    #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to('cuda:0'))
+-                    edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to('cuda:0'))
++                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to(self.device)    
++                    #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to(self.device))
++                    edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to(self.device))
+                     sca_pos, vec_pos = elect_field(data.cpx_pos[edge_index_1], data.cpx_charge[edge_index_1], new_pos_to_add[edge_index_0])
+                     sca_ele = scatter_add(sca_pos, edge_index_0)
+                     vec_ele = scatter_add(vec_pos, edge_index_0, dim = 0)
+-- 
+2.41.0
+
