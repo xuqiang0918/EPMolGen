@@ -1,0 +1,41 @@
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+--------------+--------------------------------------------
+ Host IP      | 10.71.123.51
+ PyTorch      | 2.12.0
+ Torch-SDAA   | 3.2.1
+--------------+--------------------------------------------
+ SDAA Driver  | 3.2.0 (N/A)
+ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
+ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
+ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
+ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
+ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
+ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
+ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
+--------------+--------------------------------------------
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+ 0    20.5 s  17 atoms  OK    CC(C)c1c(Cl)cccc1-c1ccc(O)cc1
+ 1    24.3 s  22 atoms  OK    CC(C=Cc1cc(O)c(Cl)c(C(CC(=O)O)C(=O)O)c1)CI
+ 2    15.2 s  14 atoms  OK    C=CCCC(C)CC1CCCC(=O)C1
+ 3    21.3 s  20 atoms  OK    CC=NCCCCCCCC(CC)c1ccc(Cl)cc1
+ 4    27.6 s  26 atoms  OK    Cc1ccc(CNC(=O)c2c(O)cc(CCBr)cc2C(=O)C(N)=O)cc1
+ 5    10.6 s  10 atoms  OK    CC(Cl)=C1CCCC(O)C1
+ 6    20.9 s  15 atoms  OK    C=CCCOc1c(Cl)ccc(C(=O)O)c1
+ 7    17.0 s  16 atoms  OK    CC=Cc1cc(C=C(C)CCCC)ccc1
+ 8    10.6 s  10 atoms  OK    c1ccc2ccccc2c1
+ 9    25.4 s  24 atoms  OK    COc1cc(C(C)C(=O)CC2=CC=C(C(=O)O)C=C(O)C2)ccc1
+
+--- summary ---
+device           : sdaa:0 (sdaa)
+prep+load        : 3.8 s
+molecules        : 10
+total (generate) : 193.4 s
+per molecule     : 19.3 s (min 10.6 / max 27.6)
+atoms per mol    : 17.4 avg
+valid SMILES     : 10/10
+peak device mem  : 123.6 MiB
+sdf              : gen_results_bench_sdaa/1bvr/2026-10-28-04-04-06/generated.sdf
+warning: driver api and driver versions are different

@@ -1,0 +1,47 @@
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+--------------+--------------------------------------------
+ Host IP      | 10.71.123.51
+ PyTorch      | 2.12.0
+ Torch-SDAA   | 3.2.1
+--------------+--------------------------------------------
+ SDAA Driver  | 3.2.0 (N/A)
+ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
+ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
+ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
+ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
+ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
+ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
+ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
+--------------+--------------------------------------------
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
+  n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
+/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
+  ix_class = int(re.search('\d+', p)[0]) - 1
+device=sdaa:0  cases=10  molecules/case=50  seed=1234
+warning: driver api and driver versions are different
+Error in cpuinfo: processor architecture is not supported in cpuinfo
+model device: sdaa:0
+rng align_nv_device: True  (TORCH_SDAA_ALIGN_NV_DEVICE=a100)
+/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+Invalid mol:  CCCCC=C1C=C(C(N)=O)CC(C(C)C=CCl)C1
+Invalid mol:  CCCCC1=CC(=O)C2CCC=C(C)C2=C1
+Invalid mol:  C1=CCC(C2=CC(=CC3=CCCC=C3)CC=C2)C=C1
+Invalid mol:  CCC1C(O)=CCC2C(=O)C=C(C(N)C(=O)O)C=C21
+Invalid mol:  COCC1=CC(=CCCCC(=O)N=O)CCC1C(=O)O
+Invalid mol:  N=CC(N)C1=CC=CC(C=CC=C2C=CCCC2)C1
+44
+44
+Validity: 0.8800
+Unique: 1.0000
+[ 1/10] 1bvr   valid=44/50 unique=44 heavy_atoms=18.3 wall=986.7s (19.73s/mol) peak=122.3MiB
+Invalid mol:  CCC=NC=CCCC(C1=CCC(=N)C=C1)C1=NCN=C1
+Invalid mol:  CS(=O)C1=CC=C2C(Cl)=CC(N)=CC2C1=O
+Invalid mol:  CCCC1=CCC(=C(C=CC=O)C(N)=O)C=C1
+47
+47
+Validity: 0.9400
+Unique: 1.0000
+[ 2/10] 1u0f   valid=47/50 unique=47 heavy_atoms=18.2 wall=735.3s (14.71s/mol) peak=89.2MiB
+Invalid mol:  NC1=NCC2C=C(O)C=C(NC(=O)CCO)C2C1

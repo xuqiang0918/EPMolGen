@@ -1,0 +1,11 @@
+case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
+1bvr,50,50,50,1.0,1.0,18.4,344.5,6.89,56.6,gen_results_dataset_cuda_seed8888/1bvr/2026-10-26-17-08-01
+1u0f,50,50,50,1.0,1.0,17.7,243.9,4.88,45.0,gen_results_dataset_cuda_seed8888/1u0f/2026-10-26-17-13-45
+1zyu,50,50,50,1.0,1.0,18.1,291.4,5.83,56.5,gen_results_dataset_cuda_seed8888/1zyu/2026-10-26-17-17-49
+2ah9,50,50,50,1.0,1.0,18.3,309.9,6.2,68.1,gen_results_dataset_cuda_seed8888/2ah9/2026-10-26-17-22-40
+2ati,50,50,50,1.0,1.0,18.3,207.7,4.15,47.8,gen_results_dataset_cuda_seed8888/2ati/2026-10-26-17-27-50
+2hw1,50,50,50,1.0,1.0,18.4,199.1,3.98,46.6,gen_results_dataset_cuda_seed8888/2hw1/2026-10-26-17-31-18
+4bnw,50,50,50,1.0,1.0,18.3,206.8,4.14,50.9,gen_results_dataset_cuda_seed8888/4bnw/2026-10-26-17-34-37
+4i91,50,50,47,1.0,0.94,17.5,181.6,3.63,40.1,gen_results_dataset_cuda_seed8888/4i91/2026-10-26-17-38-04
+5g3n,50,50,50,1.0,1.0,18.4,194.6,3.89,43.0,gen_results_dataset_cuda_seed8888/5g3n/2026-10-26-17-41-05
+5lvq,50,50,50,1.0,1.0,18.6,152.4,3.05,40.7,gen_results_dataset_cuda_seed8888/5lvq/2026-10-26-17-44-20

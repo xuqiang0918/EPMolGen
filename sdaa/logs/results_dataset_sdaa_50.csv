@@ -1,0 +1,11 @@
+case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
+1bvr,50,50,50,1.0,1.0,18.4,985.4,19.71,122.3,gen_results_dataset_sdaa_50/1bvr/2026-10-26-07-26-22
+1u0f,50,50,50,1.0,1.0,18.2,744.5,14.89,89.2,gen_results_dataset_sdaa_50/1u0f/2026-10-26-07-42-48
+1zyu,50,50,50,1.0,1.0,18.2,978.3,19.57,122.1,gen_results_dataset_sdaa_50/1zyu/2026-10-26-07-55-12
+2ah9,50,50,50,1.0,1.0,18.1,1317.8,26.36,152.6,gen_results_dataset_sdaa_50/2ah9/2026-10-26-08-11-31
+2ati,50,50,50,1.0,1.0,17.9,918.3,18.37,96.9,gen_results_dataset_sdaa_50/2ati/2026-10-26-08-33-29
+2hw1,50,50,49,1.0,0.98,18.5,791.2,15.82,95.6,gen_results_dataset_sdaa_50/2hw1/2026-10-26-08-48-47
+4bnw,50,50,49,1.0,0.98,18.5,886.7,17.73,106.9,gen_results_dataset_sdaa_50/4bnw/2026-10-26-09-01-58
+4i91,50,50,49,1.0,0.98,17.2,633.8,12.68,76.2,gen_results_dataset_sdaa_50/4i91/2026-10-26-09-16-45
+5g3n,50,50,50,1.0,1.0,18.2,741.3,14.83,86.4,gen_results_dataset_sdaa_50/5g3n/2026-10-26-09-27-19
+5lvq,50,50,50,1.0,1.0,18.4,696.1,13.92,79.0,gen_results_dataset_sdaa_50/5lvq/2026-10-26-09-39-40
