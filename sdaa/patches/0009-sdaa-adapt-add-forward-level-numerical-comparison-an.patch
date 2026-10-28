@@ -1,0 +1,334 @@
+From 356f977a97de6ad8ffd76daa53322c1dd2733989 Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 14:38:18 +0800
+Subject: [PATCH 09/11] [sdaa-adapt] add forward-level numerical comparison and
+ chaos sensitivity check
+
+---
+ sdaa/chaos_check.txt            |  6 +++
+ sdaa/forward_compare.txt        | 41 ++++++++++++++
+ sdaa/scripts/chaos_check.py     | 87 ++++++++++++++++++++++++++++++
+ sdaa/scripts/compare_forward.py | 54 +++++++++++++++++++
+ sdaa/scripts/forward_check.py   | 94 +++++++++++++++++++++++++++++++++
+ 5 files changed, 282 insertions(+)
+ create mode 100644 sdaa/chaos_check.txt
+ create mode 100644 sdaa/forward_compare.txt
+ create mode 100644 sdaa/scripts/chaos_check.py
+ create mode 100644 sdaa/scripts/compare_forward.py
+ create mode 100644 sdaa/scripts/forward_check.py
+
+diff --git a/sdaa/chaos_check.txt b/sdaa/chaos_check.txt
+new file mode 100644
+index 0000000..935f8da
+--- /dev/null
++++ b/sdaa/chaos_check.txt
+@@ -0,0 +1,6 @@
++device=cuda:0  eps=1e-05  molecules: base=10 perturbed=10
++identical molecules: 6 / 10
++device=cuda:0  eps=0.0001  molecules: base=10 perturbed=9
++identical molecules: 1 / 10
++device=cuda:0  eps=0.001  molecules: base=10 perturbed=9
++identical molecules: 0 / 10
+diff --git a/sdaa/forward_compare.txt b/sdaa/forward_compare.txt
+new file mode 100644
+index 0000000..55f3443
+--- /dev/null
++++ b/sdaa/forward_compare.txt
+@@ -0,0 +1,41 @@
++=== float32 forward (SDAA vs CUDA) ===
++tensor         shape                 max_abs     mean_abs          rel  bitwise
++cpx_pos        (1070, 3)           0.000e+00    0.000e+00    0.000e+00      YES
++cpx_feature    (1070, 27)          0.000e+00    0.000e+00    0.000e+00      YES
++cpx_edge_index (2, 17120)          0.000e+00    0.000e+00    0.000e+00      YES
++h_cpx          (1070, 112)         2.384e-07    4.431e-09    8.494e-08       no
++h_enc          (1070, 112)         3.891e-05    6.682e-07    5.857e-06       no
++pivotal_prob   (1070,)             1.371e-06    6.987e-08    1.382e-06       no
++pos_abs        (1, 3, 3)           4.768e-07    1.060e-07    9.060e-09       no
++pos_pi         (1, 3)              6.706e-08    3.229e-08    1.264e-07       no
++pos_sigma      (1, 3, 3)           4.768e-07    2.715e-07    6.391e-07       no
++
++pivotal_prob: top1=0.991771 top2=0.991261 gap=5.096e-04
++Traceback (most recent call last):
++  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 54, in <module>
++    main()
++  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 49, in main
++    frac = float((gap < thr).sum()) / len(gap) if len(gap) else 0.0
++                                                  ^^^^^^^^
++TypeError: object of type 'numpy.float64' has no len()
++
++=== float64 forward (SDAA vs CUDA) ===
++tensor         shape                 max_abs     mean_abs          rel  bitwise
++cpx_pos        (1070, 3)           0.000e+00    0.000e+00    0.000e+00      YES
++cpx_feature    (1070, 27)          0.000e+00    0.000e+00    0.000e+00      YES
++cpx_edge_index (2, 17120)          0.000e+00    0.000e+00    0.000e+00      YES
++h_cpx          (1070, 112)         4.441e-16    1.417e-17    1.582e-16       no
++h_enc          (1070, 112)         5.145e-13    8.395e-15    7.744e-14       no
++pivotal_prob   (1070,)             2.626e-14    9.316e-16    2.647e-14       no
++pos_abs        (1, 3, 3)           7.105e-15    4.984e-15    1.350e-16       no
++pos_pi         (1, 3)              1.388e-15    9.113e-16    2.616e-15       no
++pos_sigma      (1, 3, 3)           1.010e-14    4.046e-15    1.354e-14       no
++
++pivotal_prob: top1=0.991771 top2=0.991261 gap=5.098e-04
++Traceback (most recent call last):
++  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 54, in <module>
++    main()
++  File "/data/application/xuqiang/EPMolGen/sdaa/scripts/compare_forward.py", line 49, in main
++    frac = float((gap < thr).sum()) / len(gap) if len(gap) else 0.0
++                                                  ^^^^^^^^
++TypeError: object of type 'numpy.float64' has no len()
+diff --git a/sdaa/scripts/chaos_check.py b/sdaa/scripts/chaos_check.py
+new file mode 100644
+index 0000000..31a3858
+--- /dev/null
++++ b/sdaa/scripts/chaos_check.py
+@@ -0,0 +1,87 @@
++"""Chaos sensitivity check: how many generated molecules change when the model
++weights are perturbed by ~1e-6 (the fp32 noise level between two platforms).
++
++Runs the repository sampling twice with identical seeds, the second time with
++perturbed weights. A high change rate means the end-to-end molecule comparison
++is dominated by discrete-decision chaos, not by a platform defect.
++
++Usage:
++    python sdaa/scripts/chaos_check.py --device cuda:0 -n 10
++"""
++
++import argparse
++import os
++import random
++import sys
++
++import numpy as np
++import torch
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
++sys.path.insert(0, ROOT)
++sys.path.insert(0, HERE)
++
++from EPMolGen import epmolgen, Generate  # noqa: E402
++from EPMolGen.tools import *  # noqa: F401,F403,E402
++from guassian_atom_number import sample_atom_num  # noqa: E402
++from bench_infer import ATOMIC_NUMBERS, build_complex  # noqa: E402
++
++
++def generate_smiles(model, cpx, graph_compose, device, n, seed):
++    torch.manual_seed(seed)
++    np.random.seed(seed)
++    random.seed(seed)
++    sample = Generate(
++        model, graph_compose.run, temperature=[1.0, 1.0], atom_type_map=ATOMIC_NUMBERS,
++        num_bond_type=4, num_atom_max=35, pivotal_threshold=0.5, max_double_in_6ring=0,
++        min_dist_inter_mol=3.0, bond_length_range=(1.0, 2.0), choose_max=1, device=device,
++    )
++    out = []
++    for _ in range(n):
++        sample.num_atom_max = sample_atom_num([10, 28], distribution="normal")
++        res = sample.run(cpx.clone().detach())
++        mol = res[0] if res else None
++        if mol is not None:
++            from rdkit import Chem
++            out.append(Chem.MolToSmiles(mol))
++    return out
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--device", default="cuda:0")
++    ap.add_argument("-n", type=int, default=10)
++    ap.add_argument("--eps", type=float, default=1e-5)
++    ap.add_argument("--pocket", default="./Ten_test_cases/1bvr/1bvr_pocket10.pdb")
++    ap.add_argument("--topo", default="./Ten_test_cases/1bvr/1bvr_topo.dict")
++    ap.add_argument("--ckpt", default="./model_ckpt.pt")
++    ap.add_argument("--seed", type=int, default=1234)
++    args = ap.parse_args()
++
++    device = torch.device(args.device)
++    cpx, graph_compose = build_complex(args.pocket, args.topo)
++    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
++    model = epmolgen(ckpt["config"]).to(device)
++    model.load_state_dict(ckpt["model"])
++    model.eval()
++
++    base = generate_smiles(model, cpx, graph_compose, args.device, args.n, args.seed)
++
++    with torch.no_grad():
++        g = torch.Generator(device="cpu").manual_seed(args.seed + 7)
++        for p in model.parameters():
++            noise = torch.randn(p.shape, generator=g).to(p.device)
++            p.add_(noise * args.eps)
++
++    pert = generate_smiles(model, cpx, graph_compose, args.device, args.n, args.seed)
++
++    common = set(base) & set(pert)
++    print("device=%s  eps=%g  molecules: base=%d perturbed=%d" % (args.device, args.eps, len(base), len(pert)))
++    print("identical molecules: %d / %d" % (len(common), max(len(base), len(pert))))
++    for i, (a, b) in enumerate(zip(base, pert)):
++        print("  %2d  %-52s %s" % (i, a, "SAME" if a == b else "DIFF -> " + b))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/sdaa/scripts/compare_forward.py b/sdaa/scripts/compare_forward.py
+new file mode 100644
+index 0000000..39e3813
+--- /dev/null
++++ b/sdaa/scripts/compare_forward.py
+@@ -0,0 +1,54 @@
++"""Compare two forward dumps produced by forward_check.py (element-wise).
++
++Also reports how close the sampling decisions are: the gap between the top-1
++and top-2 probability tells how often a 1e-6 numerical difference can flip an
++argmax / multinomial draw.
++
++Usage:
++    python sdaa/scripts/compare_forward.py a.npz b.npz
++"""
++
++import sys
++
++import numpy as np
++
++
++def bitwise_equal(a, b):
++    if a.dtype != b.dtype or a.shape != b.shape:
++        return False
++    return bool((np.ascontiguousarray(a).view(np.uint8)
++                 == np.ascontiguousarray(b).view(np.uint8)).all())
++
++
++def main():
++    a = np.load(sys.argv[1])
++    b = np.load(sys.argv[2])
++    keys = [k for k in a.files if k in b.files]
++    print("%-14s %-16s %12s %12s %12s %8s" % ("tensor", "shape", "max_abs", "mean_abs", "rel", "bitwise"))
++    for k in keys:
++        x, y = a[k].astype(np.float64), b[k].astype(np.float64)
++        if x.shape != y.shape:
++            print("%-14s %-16s SHAPE MISMATCH %s vs %s" % (k, str(x.shape), y.shape))
++            continue
++        d = np.abs(x - y)
++        scale = max(float(np.abs(x).max()), 1e-12)
++        print("%-14s %-16s %12.3e %12.3e %12.3e %8s"
++              % (k, str(x.shape), d.max(), d.mean(), d.max() / scale,
++                 "YES" if bitwise_equal(a[k], b[k]) else "no"))
++
++    # how often is the top-2 probability gap small enough for a 1e-6 difference to flip the pick?
++    for name, key in (("pivotal_prob", "pivotal_prob"), ("pos_pi", "pos_pi")):
++        if key not in keys:
++            continue
++        p = np.sort(a[key].astype(np.float64).ravel())[::-1]
++        if len(p) < 2:
++            continue
++        gap = p[0] - p[1]
++        print("\n%s: top1=%.6f top2=%.6f gap=%.3e" % (name, p[0], p[1], gap))
++        for thr in (1e-6, 1e-5, 1e-4, 1e-3, 1e-2):
++            frac = float((gap < thr).sum()) / len(gap) if len(gap) else 0.0
++            print("  gap < %-6.0e : %6.2f%% of items" % (thr, frac * 100))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/sdaa/scripts/forward_check.py b/sdaa/scripts/forward_check.py
+new file mode 100644
+index 0000000..5362277
+--- /dev/null
++++ b/sdaa/scripts/forward_check.py
+@@ -0,0 +1,94 @@
++"""Deterministic forward-pass dump for cross-platform numerical comparison.
++
++Builds the complex for one pocket, runs the deterministic part of the model
++(embed_compose -> encoder -> pivotal_net -> pos_predictor) and stores the
++intermediate tensors so that two platforms can be compared element-wise.
++
++No sampling is involved, so the output is a pure function of the input.
++
++Usage:
++    python sdaa/scripts/forward_check.py --device sdaa:0 --out /tmp/fwd_sdaa.npz
++    python sdaa/scripts/forward_check.py --device cuda:0 --out /tmp/fwd_cuda.npz
++"""
++
++import argparse
++import os
++import random
++import sys
++
++import numpy as np
++import torch
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
++sys.path.insert(0, ROOT)
++sys.path.insert(0, HERE)
++
++from EPMolGen import epmolgen, Generate  # noqa: E402
++from EPMolGen.EPMolGen_model import embed_compose  # noqa: E402
++from EPMolGen.tools import *  # noqa: F401,F403,E402
++from bench_infer import ATOMIC_NUMBERS, build_complex  # noqa: E402
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--device", default="cuda:0")
++    ap.add_argument("--pocket", default="./Ten_test_cases/1bvr/1bvr_pocket10.pdb")
++    ap.add_argument("--topo", default="./Ten_test_cases/1bvr/1bvr_topo.dict")
++    ap.add_argument("--ckpt", default="./model_ckpt.pt")
++    ap.add_argument("--seed", type=int, default=1234)
++    ap.add_argument("--dtype", default="float32", choices=["float32", "float64"])
++    ap.add_argument("--out", default="/tmp/fwd.npz")
++    args = ap.parse_args()
++
++    dt = torch.float64 if args.dtype == "float64" else torch.float32
++    device = torch.device(args.device)
++    np.random.seed(args.seed)
++    random.seed(args.seed)
++    torch.manual_seed(args.seed)
++
++    cpx, _ = build_complex(args.pocket, args.topo)
++    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
++    model = epmolgen(ckpt["config"]).to(device=device, dtype=dt)
++    model.load_state_dict(ckpt["model"])
++    model.eval()
++
++    data = cpx.to(device)
++    with torch.no_grad():
++        h_cpx = embed_compose(
++            data.cpx_feature.to(dt), data.cpx_pos.to(dt), data.idx_ligand_ctx_in_cpx,
++            data.idx_protein_in_cpx, model.ligand_atom_emb, model.protein_atom_emb,
++            model.emb_dim)
++        h_enc = model.encoder(
++            node_attr=h_cpx, pos=data.cpx_pos.to(dt), edge_index=data.cpx_edge_index,
++            edge_feature=data.cpx_edge_feature.to(dt), annealing=model.msg_annealing)
++        pivotal_pred = model.pivotal_net(h_enc, data.idx_protein_in_cpx)
++        pivotal_prob = torch.sigmoid(pivotal_pred).view(-1)
++        pivot = data.idx_protein_in_cpx[pivotal_prob.argmax()].view(-1)
++        rel, abs_pos, sigma, pi = model.pos_predictor(
++            h_enc, pivot, data.cpx_pos.to(dt), atom_type_emb=None)
++
++    def flat(x):
++        if isinstance(x, (list, tuple)):
++            return torch.cat([t.reshape(t.shape[0], -1) for t in x], dim=1)
++        return x
++
++    out = {
++        "cpx_pos": data.cpx_pos.detach().cpu().numpy(),
++        "cpx_feature": data.cpx_feature.detach().cpu().numpy(),
++        "cpx_edge_index": data.cpx_edge_index.detach().cpu().numpy(),
++        "h_cpx": flat(h_cpx).detach().cpu().numpy(),
++        "h_enc": flat(h_enc).detach().cpu().numpy(),
++        "pivotal_prob": pivotal_prob.detach().cpu().numpy(),
++        "pos_abs": abs_pos.detach().cpu().numpy(),
++        "pos_pi": pi.detach().cpu().numpy(),
++        "pos_sigma": sigma.detach().cpu().numpy(),
++    }
++    np.savez(args.out, **out)
++    print("device=%s  out=%s" % (args.device, args.out))
++    for k, v in out.items():
++        print("  %-14s %-18s sum=%.6f" % (k, str(v.shape), float(v.sum())))
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.41.0
+

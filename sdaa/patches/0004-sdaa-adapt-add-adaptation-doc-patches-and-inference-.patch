@@ -1,0 +1,421 @@
+From ef4f3af91ac18e3a6e5e9278eaf7a4b6f66351f8 Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 11:15:48 +0800
+Subject: [PATCH 04/11] [sdaa-adapt] add adaptation doc, patches and inference
+ benchmark script
+
+---
+ sdaa/SDAA_ADAPTATION.md                       |  79 ++++++++++
+ .../0001-upstream-compat-EPMolGen.patch       |  70 +++++++++
+ sdaa/patches/0002-sdaa-adapt-EPMolGen.patch   |  56 +++++++
+ ...003-upstream-compat-EPMolGen-pyg-knn.patch |  26 ++++
+ sdaa/scripts/bench_infer.py                   | 138 ++++++++++++++++++
+ 5 files changed, 369 insertions(+)
+ create mode 100644 sdaa/SDAA_ADAPTATION.md
+ create mode 100644 sdaa/patches/0001-upstream-compat-EPMolGen.patch
+ create mode 100644 sdaa/patches/0002-sdaa-adapt-EPMolGen.patch
+ create mode 100644 sdaa/patches/0003-upstream-compat-EPMolGen-pyg-knn.patch
+ create mode 100644 sdaa/scripts/bench_infer.py
+
+diff --git a/sdaa/SDAA_ADAPTATION.md b/sdaa/SDAA_ADAPTATION.md
+new file mode 100644
+index 0000000..b7363ef
+--- /dev/null
++++ b/sdaa/SDAA_ADAPTATION.md
+@@ -0,0 +1,79 @@
++# EPMolGen SDAA 适配
++
++## 结论
++
++官方推理脚本 `sample_main.py` 在 SDAA 上直接可跑，5 个生成分子全部有效（脚本自带统计 `Validity 1.0000` / `Unique 1.0000`）。
++
++但 SDAA 相对本机 CPU 基本没有加速（22.9 s/分子 vs 27.1 s/分子）：瓶颈在 CPU 侧的逐原子图重建与 RDKit 采样，卡上只占 124.7 MiB 显存。
++
++## 环境
++
++| 项 | 值 |
++| --- | --- |
++| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） |
++| 容器 | `sdaa`（镜像 `3.2.1-torch_sdaa3.2.1`） |
++| Python | `/home/py312/bin/python3`（3.12.13） |
++| torch | 2.12.0 / Torch-SDAA 3.2.1 |
++| 设备 | `sdaa:0`（单核组 16 GiB） |
++| 仓库 | `/data/application/xuqiang/EPMolGen`，分支 `adapt/sdaa` |
++
++依赖全部用容器自带，**未额外安装任何包**：`torch_scatter 2.1.2`、`torch_cluster 1.6.3`、`torch_sparse 0.6.18`、`pyg_lib 0.7.0`、`pymol`、`rdkit`。PyG 实装 2.8.0.post1（仓库 `requirements.txt` 钉 2.5.3）。
++
++## 改动
++
++| 归属 | 位置 | 改动 |
++| --- | --- | --- |
++| `[sdaa-adapt]` | `EPMolGen/sample.py:276-281` | 4 处 `.cuda(data.cpx_pos.device)` → `.to(data.cpx_pos.device)`；`.cuda()` 是 CUDA 专有 API |
++| `[sdaa-adapt]` | `EPMolGen/sample.py:342,344` | 3 处 `.to('cuda:0')` → `.to(self.device)`（含 2 行注释） |
++| `[upstream]` | `EPMolGen/sample.py:433` | `if out: mol,_ = out` → `mol = out[0] if out else None`；`run()` 返回 None 时 `mol` 未绑定，多分子必崩 |
++| `[upstream]` | `EPMolGen/sample.py:342` | `step_batch` 补 `dtype=torch.long`；PyG ≥ 2.8 的 `index2ptr` 要求整型 batch |
++| `[upstream]` | `sample_main.py:80` | `torch.load(..., weights_only=False)`；torch ≥ 2.6 默认 True，而 ckpt 内含 `easydict.EasyDict` |
++| `[upstream]` | `sample_main.py:43-58` | 作者本机绝对路径的调试块改为「CLI 未给才生效」的仓库内相对路径 |
++
++patch 归档在 `sdaa/patches/`，3 个 commit 按平台适配 / 通用修复分开。
++
++## 运行
++
++```bash
++docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang sdaa bash -c \
++  'source /opt/tecoai/setvars.sh; cd /data/application/xuqiang/EPMolGen && \
++   /home/py312/bin/python3 -u sample_main.py --device sdaa:0 --molecule_number 5'
++```
++
++输出（节选）：
++
++```
++CCC=CC=CC(C)CCc1ccccc1OC
++C=CC=CCCCCC(COP(=O)(O)O)C(=O)O
++...
++5
++5
++Validity: 1.0000
++Unique: 1.0000
++```
++
++采样为逐原子随机过程，未设随机种子；每次生成的分子不同。产物在 `gen_results_sdaa/1bvr/<时间戳>/`（`generated.sdf` / `generated.smi`）。
++
++## 性能与显存
++
++| 场景 | 结果 |
++| --- | --- |
++| 官方 CLI（5 分子，含数据准备与加载） | 112 s |
++| 生成阶段（`sdaa/scripts/bench_infer.py`，5 分子） | 22.9 s/分子（10.6 ~ 30.1） |
++| 同脚本 CPU 对照（3 分子） | 27.1 s/分子（21.6 ~ 31.5） |
++| 峰值显存 | 124.7 MiB |
++
++单分子耗时随生成分子数变化（10 原子 10.6 s，28 原子 30.1 s）：每加一个原子都要跑一次 `self.run()`，即重建 KNN 图（`GraphCompose`，CPU 侧 16 进程）+ RDKit 建分子，真正上卡的 forward 只有几百个节点。
++
++## 精度
++
++- 本任务没有预测值可对，采样又是随机的，不存在逐比特对照基准。
++- 可用的对照是仓库脚本自带的生成分布统计：5 个分子 `Validity 1.0000`、`Unique 1.0000`（`sdaa/scripts/bench_infer.py` 另测 5/5 SMILES 可解析）。
++- **与 CUDA 的同权重对照未做**（6.21 上需另装 torch 2.2.1+cu118 与 PyG 2.5.3），因此 SDAA 与 CUDA 的数值一致性属未验证项。
++
++## 已知限制
++
++- **加速有限**：22.9 s/分子 对本机 CPU 27.1 s/分子，约 1.18×。论文报告 RTX 4090 上 0.7 s/分子，但那部分差距主要在 CPU 侧 Python/RDKit，不是卡算力差距。要真正吃到加速需把逐分子串行改成批量生成，属采样逻辑改造。
++- **训练路径未适配**：`pretraining.py` / `finetuning.py` 里的 `torch.cuda.amp` 与硬编码 `cuda:0` 未动。
++- **PyG 版本**：仓库钉 2.5.3，容器是 2.8.0.post1，`knn` 的 batch 索引类型要求已按 2.8 修正。
++- `sample_main.py` 顶部的 `CUDA_LAUNCH_BLOCKING` / `CUDA_VISIBLE_DEVICES` 未改：torch 在其之前已 import，两个变量本就不生效。
+diff --git a/sdaa/patches/0001-upstream-compat-EPMolGen.patch b/sdaa/patches/0001-upstream-compat-EPMolGen.patch
+new file mode 100644
+index 0000000..4f3df1f
+--- /dev/null
++++ b/sdaa/patches/0001-upstream-compat-EPMolGen.patch
+@@ -0,0 +1,70 @@
++From 4b68b02a5d9dd5c66348c70868b0321d8687718e Mon Sep 17 00:00:00 2001
++From: xuqiang <00771xq@tecorigin.com>
++Date: Mon, 26 Oct 2026 11:06:23 +0800
++Subject: [PATCH 1/3] [upstream] make demo defaults yield to CLI args, fix
++ unbound mol, load ckpt with torch>=2.6
++
++---
++ EPMolGen/sample.py |  3 +--
++ sample_main.py     | 21 ++++++++-------------
++ 2 files changed, 9 insertions(+), 15 deletions(-)
++
++diff --git a/EPMolGen/sample.py b/EPMolGen/sample.py
++index 96f4707..1138ed7 100644
++--- a/EPMolGen/sample.py
+++++ b/EPMolGen/sample.py
++@@ -431,8 +431,7 @@ class Generate(object):
++             self.num_atom_max = sample_atom_num([10,28], distribution='normal')
++             data_clone = data.clone().detach()
++             out = self.run(data_clone)
++-            if out:
++-                mol, _ = out
+++            mol = out[0] if out else None
++             del data_clone
++             if mol is not None:
++                 #print(len(mol.GetAtoms()))
++diff --git a/sample_main.py b/sample_main.py
++index 58292e2..3619eeb 100644
++--- a/sample_main.py
+++++ b/sample_main.py
++@@ -40,21 +40,16 @@ if __name__ == '__main__':
++         args.name = args.pocket.split('/')[-1].split('-')[0]
++ ###################    For your convenience, you can test your code by implemented it here    ##############################
++     #args.pocket = './YTHDC2/6k6u_pocket10.pdb' 
++-    args.pocket = '/export/home/yangzhenyu/EPMolGen/Ten_test_cases/1bvr/1bvr_pocket10.pdb'
++-    args.ckpt = '/export/home/yangzhenyu/EPMolGen/model_ckpt.pt'
++-    args.choose_max = 0
++-    #args.molecule_number = 5000
++-    args.molecule_number = 10000
++-    args.print_SMILES = True
+++    # demo defaults, applied only when the matching CLI argument is absent
+++    if args.pocket == 'None':
+++        args.pocket = './Ten_test_cases/1bvr/1bvr_pocket10.pdb'
+++        args.topo = './Ten_test_cases/1bvr/1bvr_topo.dict'
+++        args.name = '1bvr'
+++    if args.ckpt.strip() == '':
+++        args.ckpt = './model_ckpt.pt'
++     args.choose_max = 1
++     args.temp_atom = 1.0
++     args.temp_bond = 1.0
++-    #args.name = 'YTHDC2' 
++-    args.name = '1bvr'
++-    args.root_path = 'gen_results' 
++-    args.device = 'cuda:0'
++-    #args.topo = './YTHDC2/6k6u_topo.dict'
++-    args.topo = '/export/home/yangzhenyu/EPMolGen/Ten_test_cases/1bvr/1bvr_topo.dict'
++ ###################      For your convenience, you can test your code by implemented it here      ##############################
++     ## Load Target
++     assert args.pocket != 'None', 'Please specify pocket !'
++@@ -82,7 +77,7 @@ if __name__ == '__main__':
++ 
++     ## Load model
++     print('Loading model ...')
++-    ckpt = torch.load(args.ckpt, map_location=device)
+++    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
++     config = ckpt['config']
++     model = epmolgen(config).to(device)
++     model.load_state_dict(ckpt['model'])
++-- 
++2.41.0
++
+diff --git a/sdaa/patches/0002-sdaa-adapt-EPMolGen.patch b/sdaa/patches/0002-sdaa-adapt-EPMolGen.patch
+new file mode 100644
+index 0000000..b21bb2a
+--- /dev/null
++++ b/sdaa/patches/0002-sdaa-adapt-EPMolGen.patch
+@@ -0,0 +1,56 @@
++From 4b92e1a9f6bc5c0fdb4d8de00c54b5f0aac76847 Mon Sep 17 00:00:00 2001
++From: xuqiang <00771xq@tecorigin.com>
++Date: Mon, 26 Oct 2026 11:06:23 +0800
++Subject: [PATCH 2/3] [sdaa-adapt] sample: replace cuda-only
++ .cuda()/.to("cuda:0") with device-agnostic .to()
++
++---
++ EPMolGen/sample.py | 16 ++++++++--------
++ 1 file changed, 8 insertions(+), 8 deletions(-)
++
++diff --git a/EPMolGen/sample.py b/EPMolGen/sample.py
++index 1138ed7..d4839b2 100644
++--- a/EPMolGen/sample.py
+++++ b/EPMolGen/sample.py
++@@ -273,12 +273,12 @@ class Generate(object):
++         data = data.to(self.device)
++         with torch.no_grad():
++             self.prior_node = torch.distributions.normal.Normal(
++-                    torch.zeros([len(self.atom_type_map)]).cuda(data.cpx_pos.device), 
++-                    self.temperature[0] * torch.ones([len(self.atom_type_map)]).cuda(data.cpx_pos.device)
+++                    torch.zeros([len(self.atom_type_map)]).to(data.cpx_pos.device), 
+++                    self.temperature[0] * torch.ones([len(self.atom_type_map)]).to(data.cpx_pos.device)
++                     )
++             self.prior_edge = torch.distributions.normal.Normal(
++-                    torch.zeros([self.num_bond_type]).cuda(data.cpx_pos.device), 
++-                    self.temperature[1] * torch.ones([self.num_bond_type]).cuda(data.cpx_pos.device)
+++                    torch.zeros([self.num_bond_type]).to(data.cpx_pos.device), 
+++                    self.temperature[1] * torch.ones([self.num_bond_type]).to(data.cpx_pos.device)
++                     )
++             begin_atom_idx = 0 + data.idx_ligand_ctx_in_cpx.size(0)
++             rw_mol = Chem.RWMol()
++@@ -298,7 +298,7 @@ class Generate(object):
++                         l_.append(b2)
++             
++             self.counter = 0
++-            #new_pos_traj = torch.empty(1,3).to('cuda:0')
+++            #new_pos_traj = torch.empty(1,3).to(self.device)
++             for atom_idx in range(begin_atom_idx, self.num_atom_max):
++                 data = data.to(self.device)
++                 h_cpx = embed_compose(
++@@ -339,9 +339,9 @@ class Generate(object):
++                     if new_pos_to_add is False:
++                         self.resample_node += 1
++                         continue
++-                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to('cuda:0')    
++-                    #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to('cuda:0'))
++-                    edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to('cuda:0'))
+++                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to(self.device)    
+++                    #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to(self.device))
+++                    edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to(self.device))
++                     sca_pos, vec_pos = elect_field(data.cpx_pos[edge_index_1], data.cpx_charge[edge_index_1], new_pos_to_add[edge_index_0])
++                     sca_ele = scatter_add(sca_pos, edge_index_0)
++                     vec_ele = scatter_add(vec_pos, edge_index_0, dim = 0)
++-- 
++2.41.0
++
+diff --git a/sdaa/patches/0003-upstream-compat-EPMolGen-pyg-knn.patch b/sdaa/patches/0003-upstream-compat-EPMolGen-pyg-knn.patch
+new file mode 100644
+index 0000000..fb0d20d
+--- /dev/null
++++ b/sdaa/patches/0003-upstream-compat-EPMolGen-pyg-knn.patch
+@@ -0,0 +1,26 @@
++From 3d7f5e7f17da9a6689b9c25f1130c7011f48c4bd Mon Sep 17 00:00:00 2001
++From: xuqiang <00771xq@tecorigin.com>
++Date: Mon, 26 Oct 2026 11:06:24 +0800
++Subject: [PATCH 3/3] [upstream] sample: pass integer batch indices to PyG knn
++ (required by PyG >= 2.8)
++
++---
++ EPMolGen/sample.py | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/EPMolGen/sample.py b/EPMolGen/sample.py
++index d4839b2..0b13d4e 100644
++--- a/EPMolGen/sample.py
+++++ b/EPMolGen/sample.py
++@@ -339,7 +339,7 @@ class Generate(object):
++                     if new_pos_to_add is False:
++                         self.resample_node += 1
++                         continue
++-                    data.step_batch = torch.zeros(data.cpx_pos.size(0)).to(self.device)    
+++                    data.step_batch = torch.zeros(data.cpx_pos.size(0), dtype=torch.long).to(self.device)    
++                     #edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_traj, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_traj.size()[0]).to(self.device))
++                     edge_index_0, edge_index_1 = knn(x= data.cpx_pos, y= new_pos_to_add, k=32, batch_x = data.step_batch, batch_y = torch.arange(0, new_pos_to_add.size()[0]).to(self.device))
++                     sca_pos, vec_pos = elect_field(data.cpx_pos[edge_index_1], data.cpx_charge[edge_index_1], new_pos_to_add[edge_index_0])
++-- 
++2.41.0
++
+diff --git a/sdaa/scripts/bench_infer.py b/sdaa/scripts/bench_infer.py
+new file mode 100644
+index 0000000..c4ecf3b
+--- /dev/null
++++ b/sdaa/scripts/bench_infer.py
+@@ -0,0 +1,138 @@
++"""Single-sample inference timing and peak device memory for EPMolGen.
++
++Auxiliary script (not part of upstream). Mirrors the data preparation in
++sample_main.py, then times molecule generation one molecule at a time.
++
++Usage:
++    python sdaa/bench_infer.py --device sdaa:0 -n 10
++    python sdaa/bench_infer.py --device cpu  -n 3
++"""
++
++import argparse
++import os
++import sys
++import time
++
++import torch
++from rdkit import Chem, RDLogger
++
++RDLogger.DisableLog("rdApp.*")
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from EPMolGen import epmolgen, Generate  # noqa: E402
++from EPMolGen.tools import *  # noqa: F401,F403,E402
++from EPMolGen.tools import mask_node, ComplexData  # noqa: E402
++from EPMolGen.tools.parse_pdb import Protein  # noqa: E402
++from guassian_atom_number import sample_atom_num  # noqa: E402
++
++ATOMIC_NUMBERS = [6, 7, 8, 9, 15, 16, 17, 35, 53]
++
++
++def peak_mem(device):
++    """Peak allocated bytes on the device, 0 if the backend has no counter."""
++    if device.type == "cuda" or device.type == "sdaa":
++        mod = torch.sdaa if device.type == "sdaa" else torch.cuda
++        fn = getattr(mod, "max_memory_allocated", None)
++        if fn is not None:
++            return fn(device)
++    return 0
++
++
++def reset_peak(device):
++    if device.type == "cuda" or device.type == "sdaa":
++        mod = torch.sdaa if device.type == "sdaa" else torch.cuda
++        fn = getattr(mod, "reset_peak_memory_stats", None)
++        if fn is not None:
++            fn(device)
++
++
++def build_complex(pocket, topo):
++    pro_dict = Protein(pocket, topo_info=topo).get_atom_dict(removeHs=False)
++    lig_dict = Ligand.empty_dict()
++    cpx = ComplexData.from_protein_ligand_dicts(
++        protein_dict=torchify_dict(pro_dict),
++        ligand_dict=torchify_dict(lig_dict),
++    )
++    graph_compose = GraphCompose(knn=16, num_workers=16, for_gen=True, use_protein_bond=True)
++    cpx = RefineData()(cpx)
++    cpx = LigandCountNeighbors()(cpx)
++    cpx = FeaturizeProteinAtom()(cpx)
++    cpx = FeaturizeLigandAtom(atomic_numbers=ATOMIC_NUMBERS)(cpx)
++    node4mask = torch.arange(cpx.ligand_pos.size(0))
++    cpx = mask_node(cpx, torch.empty([0], dtype=torch.long), node4mask, num_atom_type=9, y_pos_std=0.)
++    cpx = graph_compose.run(cpx)
++    return cpx, graph_compose
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--device", default="cuda:0")
++    ap.add_argument("-n", "--molecule_number", type=int, default=10)
++    ap.add_argument("--pocket", default="./Ten_test_cases/1bvr/1bvr_pocket10.pdb")
++    ap.add_argument("--topo", default="./Ten_test_cases/1bvr/1bvr_topo.dict")
++    ap.add_argument("--ckpt", default="./model_ckpt.pt")
++    ap.add_argument("--root_path", default="gen_results_bench")
++    ap.add_argument("--name", default="1bvr")
++    args = ap.parse_args()
++
++    device = torch.device(args.device)
++
++    t0 = time.time()
++    cpx, graph_compose = build_complex(args.pocket, args.topo)
++    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
++    model = epmolgen(ckpt["config"]).to(device)
++    model.load_state_dict(ckpt["model"])
++    torch_dev_sync = getattr(getattr(torch, device.type, None), "synchronize", None)
++    if callable(torch_dev_sync):
++        torch_dev_sync()
++    t_prep = time.time() - t0
++
++    sample = Generate(
++        model, graph_compose.run, temperature=[1.0, 1.0], atom_type_map=ATOMIC_NUMBERS,
++        num_bond_type=4, num_atom_max=35, pivotal_threshold=0.5, max_double_in_6ring=0,
++        min_dist_inter_mol=3.0, bond_length_range=(1.0, 2.0), choose_max=1, device=args.device,
++    )
++
++    reset_peak(device)
++    times, valid, n_atoms = [], 0, []
++    out_dir = os.path.join(args.root_path, args.name, time.strftime("%Y-%m-%d-%H-%M-%S"))
++    os.makedirs(out_dir, exist_ok=True)
++    sdf = os.path.join(out_dir, "generated.sdf")
++
++    for i in range(args.molecule_number):
++        sample.num_atom_max = sample_atom_num([10, 28], distribution="normal")
++        t1 = time.time()
++        out = sample.run(cpx.clone().detach())
++        if callable(torch_dev_sync):
++            torch_dev_sync()
++        times.append(time.time() - t1)
++
++        mol = out[0] if out else None
++        if mol is not None:
++            smi = Chem.MolToSmiles(mol)
++            ok = Chem.MolFromSmiles(smi) is not None
++            valid += int(ok)
++            n_atoms.append(mol.GetNumAtoms())
++            mol.SetProp("_Name", "No_%d-%s" % (i, args.name))
++            with open(sdf, "a") as f:
++                f.write(Chem.MolToMolBlock(mol) + "\n$$$$\n")
++            print("%2d  %6.1f s  %2d atoms  %s  %s" % (i, times[-1], mol.GetNumAtoms(), "OK  " if ok else "FAIL", smi))
++        else:
++            print("%2d  %6.1f s  run() returned None" % (i, times[-1]))
++
++    n = len(times)
++    print("\n--- summary ---")
++    print("device           : %s (%s)" % (args.device, torch.device(args.device).type))
++    print("prep+load        : %.1f s" % t_prep)
++    print("molecules        : %d" % n)
++    print("total (generate) : %.1f s" % sum(times))
++    print("per molecule     : %.1f s (min %.1f / max %.1f)" % (sum(times) / n, min(times), max(times)))
++    print("atoms per mol    : %.1f avg" % (sum(n_atoms) / len(n_atoms) if n_atoms else 0))
++    print("valid SMILES     : %d/%d" % (valid, n))
++    print("peak device mem  : %.1f MiB" % (peak_mem(device) / 1024 ** 2))
++    print("sdf              : %s" % sdf)
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.41.0
+

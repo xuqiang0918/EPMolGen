@@ -1,0 +1,609 @@
+From 95b281aa6de8dd31316af21913d600d775b5f265 Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 12:09:27 +0800
+Subject: [PATCH 05/11] [sdaa-adapt] add dataset evaluation on 10 pockets with
+ CUDA comparison
+
+---
+ sdaa/SDAA_ADAPTATION.md                   |  91 ++++++++----
+ sdaa/logs/2026-10-26_dataset_sdaa.log     | 100 ++++++++++++++
+ sdaa/logs/2026-10-26_dataset_sdaa30.log   |  58 ++++++++
+ sdaa/logs/2026-10-26_sample_main_sdaa.log |  35 +++++
+ sdaa/scripts/bench_infer.py               |   4 +-
+ sdaa/scripts/eval_dataset.py              | 160 ++++++++++++++++++++++
+ sdaa/scripts/results_dataset_cuda.csv     |  11 ++
+ sdaa/scripts/results_dataset_cuda30.csv   |   3 +
+ sdaa/scripts/results_dataset_sdaa.csv     |  11 ++
+ sdaa/scripts/results_dataset_sdaa30.csv   |   3 +
+ 10 files changed, 450 insertions(+), 26 deletions(-)
+ create mode 100644 sdaa/logs/2026-10-26_dataset_sdaa.log
+ create mode 100644 sdaa/logs/2026-10-26_dataset_sdaa30.log
+ create mode 100644 sdaa/logs/2026-10-26_sample_main_sdaa.log
+ create mode 100644 sdaa/scripts/eval_dataset.py
+ create mode 100644 sdaa/scripts/results_dataset_cuda.csv
+ create mode 100644 sdaa/scripts/results_dataset_cuda30.csv
+ create mode 100644 sdaa/scripts/results_dataset_sdaa.csv
+ create mode 100644 sdaa/scripts/results_dataset_sdaa30.csv
+
+diff --git a/sdaa/SDAA_ADAPTATION.md b/sdaa/SDAA_ADAPTATION.md
+index b7363ef..2202d9d 100644
+--- a/sdaa/SDAA_ADAPTATION.md
++++ b/sdaa/SDAA_ADAPTATION.md
+@@ -2,22 +2,26 @@
+ 
+ ## 结论
+ 
+-官方推理脚本 `sample_main.py` 在 SDAA 上直接可跑，5 个生成分子全部有效（脚本自带统计 `Validity 1.0000` / `Unique 1.0000`）。
++官方推理脚本 `sample_main.py` 在 SDAA 上直接可跑，5 个生成分子全部有效（`Validity 1.0000` / `Unique 1.0000`）。
+ 
+-但 SDAA 相对本机 CPU 基本没有加速（22.9 s/分子 vs 27.1 s/分子）：瓶颈在 CPU 侧的逐原子图重建与 RDKit 采样，卡上只占 124.7 MiB 显存。
++与 CUDA（A100）对照：SDAA 慢 **12.9×**（16.13 s/分子 对 1.25 s/分子），峰值显存 153.6 MiB 对 68.1 MiB，生成质量（仓库自带的 Validity / Unique）处于同一量级。
++
++性能差距的主因不在卡算力：每加一个原子都要在 CPU 侧重建 KNN 图（`GraphCompose`，16 进程）+ RDKit 建分子，真正上卡的 forward 只有几百个节点；SDAA 与本机 CPU（27.1 s/分子）也基本同速。
+ 
+ ## 环境
+ 
+-| 项 | 值 |
+-| --- | --- |
+-| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） |
+-| 容器 | `sdaa`（镜像 `3.2.1-torch_sdaa3.2.1`） |
+-| Python | `/home/py312/bin/python3`（3.12.13） |
+-| torch | 2.12.0 / Torch-SDAA 3.2.1 |
+-| 设备 | `sdaa:0`（单核组 16 GiB） |
+-| 仓库 | `/data/application/xuqiang/EPMolGen`，分支 `adapt/sdaa` |
++| 项 | SDAA 侧 | CUDA 对照侧 |
++| --- | --- | --- |
++| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） | 10.10.6.21（AMD EPYC 7453，A100-PCIE-40GB） |
++| 容器 | `sdaa`（镜像 `3.2.1-torch_sdaa3.2.1`） | 无（直接用宿主 conda env） |
++| Python | `/home/py312/bin/python3`（3.12.13） | `anaconda3/envs/surf/bin/python`（3.10.21） |
++| torch | 2.12.0 / Torch-SDAA 3.2.1 | 2.4.1+cu121 |
++| 设备 | `sdaa:0`（单核组 16 GiB） | `cuda:0`（A100 40 GB） |
++| 仓库 | `/data/application/xuqiang/EPMolGen`，分支 `adapt/sdaa` | `/data/application/xuqiang/EPMolGen_cuda`（同一份工作树） |
++
++SDAA 侧依赖全部用容器自带，**未额外安装任何包**：`torch_scatter 2.1.2`、`torch_cluster 1.6.3`、`torch_sparse 0.6.18`、`pyg_lib 0.7.0`、`pymol`、`rdkit`，PyG 2.8.0.post1（仓库 `requirements.txt` 钉 2.5.3）。
+ 
+-依赖全部用容器自带，**未额外安装任何包**：`torch_scatter 2.1.2`、`torch_cluster 1.6.3`、`torch_sparse 0.6.18`、`pyg_lib 0.7.0`、`pymol`、`rdkit`。PyG 实装 2.8.0.post1（仓库 `requirements.txt` 钉 2.5.3）。
++CUDA 侧环境已有 torch 2.4.1+cu121 / PyG 2.6.1 / torch_scatter 2.1.2+pt24cu121 / torch_cluster / rdkit / pymol，只隔离补了 `easydict` 与 `tensorboard`（`--target` 到 `/data/application/xuqiang/pylibs_epmolgen`，不改动 env 本体，110 MB）。
+ 
+ ## 改动
+ 
+@@ -35,12 +39,19 @@ patch 归档在 `sdaa/patches/`，3 个 commit 按平台适配 / 通用修复分
+ ## 运行
+ 
+ ```bash
++# SDAA
+ docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang sdaa bash -c \
+   'source /opt/tecoai/setvars.sh; cd /data/application/xuqiang/EPMolGen && \
+    /home/py312/bin/python3 -u sample_main.py --device sdaa:0 --molecule_number 5'
++
++# CUDA（对照）
++cd /data/application/xuqiang/EPMolGen_cuda && \
++  PYTHONPATH=/data/application/xuqiang/pylibs_epmolgen CUDA_VISIBLE_DEVICES=0 \
++  /data/application/xuqiang/anaconda3/envs/surf/bin/python -u sample_main.py \
++  --device cuda:0 --molecule_number 5 --root_path gen_results_sdaa_cuda
+ ```
+ 
+-输出（节选）：
++SDAA 输出（节选，日志 `sdaa/logs/2026-10-26_sample_main_sdaa.log`）：
+ 
+ ```
+ CCC=CC=CC(C)CCc1ccccc1OC
+@@ -52,28 +63,58 @@ Validity: 1.0000
+ Unique: 1.0000
+ ```
+ 
+-采样为逐原子随机过程，未设随机种子；每次生成的分子不同。产物在 `gen_results_sdaa/1bvr/<时间戳>/`（`generated.sdf` / `generated.smi`）。
++CUDA 同样 5 个分子、`Validity 1.0000` / `Unique 1.0000`，耗时 13 s（SDAA 112 s）。采样为逐原子随机过程，未设随机种子，每次生成的分子不同。
+ 
+ ## 性能与显存
+ 
+-| 场景 | 结果 |
+-| --- | --- |
+-| 官方 CLI（5 分子，含数据准备与加载） | 112 s |
+-| 生成阶段（`sdaa/scripts/bench_infer.py`，5 分子） | 22.9 s/分子（10.6 ~ 30.1） |
+-| 同脚本 CPU 对照（3 分子） | 27.1 s/分子（21.6 ~ 31.5） |
+-| 峰值显存 | 124.7 MiB |
++| 指标 | SDAA | CUDA (A100) | 倍数 |
++| --- | --- | --- | --- |
++| 官方 CLI（5 分子，含准备与加载） | 112 s | 13 s | 8.6× |
++| 生成阶段（`sdaa/scripts/bench_infer.py`，5 分子） | 22.9 s/分子 | 1.3 s/分子 | 17.6× |
++| 数据集 10 口袋 × 10 分子 | 16.13 s/分子 | 1.25 s/分子 | 12.9× |
++| 峰值显存（10 口袋最大） | 153.6 MiB | 68.1 MiB | 2.3× |
++| 同机 CPU 对照 | 27.1 s/分子 | — | — |
+ 
+-单分子耗时随生成分子数变化（10 原子 10.6 s，28 原子 30.1 s）：每加一个原子都要跑一次 `self.run()`，即重建 KNN 图（`GraphCompose`，CPU 侧 16 进程）+ RDKit 建分子，真正上卡的 forward 只有几百个节点。
++单分子耗时随原子数变化（SDAA 侧 10 原子 10.6 s、28 原子 30.1 s）。SDAA 相对本机 CPU 仅 1.18×，说明瓶颈在 CPU 侧。论文报告 RTX 4090 上 0.7 s/分子。
+ 
+ ## 精度
+ 
+-- 本任务没有预测值可对，采样又是随机的，不存在逐比特对照基准。
+-- 可用的对照是仓库脚本自带的生成分布统计：5 个分子 `Validity 1.0000`、`Unique 1.0000`（`sdaa/scripts/bench_infer.py` 另测 5/5 SMILES 可解析）。
+-- **与 CUDA 的同权重对照未做**（6.21 上需另装 torch 2.2.1+cu118 与 PyG 2.5.3），因此 SDAA 与 CUDA 的数值一致性属未验证项。
++生成是随机过程，没有预测值可对；两平台即使同种子也生成不同分子（RNG 实现不同），无法逐分子比对，只能做分布级统计。指标用仓库自己写的 `Generate.generate()`，即 `metrics.dir` 里的 Validity / Unique。
++
++数据集用仓库自带的 `Ten_test_cases`（10 个口袋），每个口袋生成 10 个分子，共 100 个：
++
++| 口袋 | SDAA 有效 | CUDA 有效 | SDAA s/分子 | CUDA s/分子 | SDAA 峰值 MiB | CUDA 峰值 MiB |
++| --- | --- | --- | --- | --- | --- | --- |
++| 1bvr | 8/10 | 9/10 | 19.77 | 1.24 | 123.3 | 56.6 |
++| 1u0f | 10/10 | 10/10 | 14.46 | 1.18 | 90.1 | 45.0 |
++| 1zyu | 9/10 | 10/10 | 18.58 | 1.25 | 123.1 | 56.4 |
++| 2ah9 | 9/10 | 7/10 | 23.34 | 1.59 | 153.6 | 68.1 |
++| 2ati | 8/10 | 4/10 | 15.39 | 1.25 | 97.9 | 47.7 |
++| 2hw1 | 8/10 | 7/10 | 15.57 | 1.20 | 96.5 | 46.6 |
++| 4bnw | 7/10 | 2/10 | 17.17 | 1.21 | 107.7 | 50.9 |
++| 4i91 | 8/10 | 3/10 | 8.31 | 1.10 | 77.1 | 40.1 |
++| 5g3n | 4/10 | 8/10 | 14.49 | 1.29 | 87.3 | 43.0 |
++| 5lvq | 9/10 | 8/10 | 14.22 | 1.15 | 80.0 | 40.7 |
++| **合计** | **80/100（0.80）** | **68/100（0.68）** | **16.13** | **1.25** | **153.6** | **68.1** |
++
++Unique：SDAA 78/80（0.975）、CUDA 68/68（1.000）。
++
++两个差异最大的口袋把样本加大到每案 30 个分子：
++
++| 口袋 | SDAA | CUDA |
++| --- | --- | --- |
++| 2ati | 30/30（1.000） | 23/30（0.767） |
++| 4bnw | 12/30（0.400） | 13/30（0.433） |
++| 合计 | 42/60（0.700） | 36/60（0.600） |
++
++**判定**：n=10 时单个口袋的 Validity 自身波动就很大（同一口袋 CUDA 两次跑出 0.4 与 0.767）；n=30 时两平台差异方向不一致（2ati SDAA 高、4bnw SDAA 低）；n=100 的整体差 0.80 对 0.68 落在 1.4σ 内。因此**没有证据表明 SDAA 与 CUDA 存在系统性质量差异**，本次对照不足以判定更小的偏差。
++
++原始数据：`sdaa/scripts/results_dataset_sdaa.csv`、`results_dataset_sdaa30.csv`、`results_dataset_cuda.csv`、`results_dataset_cuda30.csv`；日志在 `sdaa/logs/`。
+ 
+ ## 已知限制
+ 
+-- **加速有限**：22.9 s/分子 对本机 CPU 27.1 s/分子，约 1.18×。论文报告 RTX 4090 上 0.7 s/分子，但那部分差距主要在 CPU 侧 Python/RDKit，不是卡算力差距。要真正吃到加速需把逐分子串行改成批量生成，属采样逻辑改造。
++- **加速有限**：SDAA 比 CUDA 慢 12.9×，比本机 CPU 仅快 1.18×。要真正吃到加速需把逐分子串行改成批量生成（一次 forward 出 N 个候选），属采样逻辑改造，不是适配能解决的。
+ - **训练路径未适配**：`pretraining.py` / `finetuning.py` 里的 `torch.cuda.amp` 与硬编码 `cuda:0` 未动。
+-- **PyG 版本**：仓库钉 2.5.3，容器是 2.8.0.post1，`knn` 的 batch 索引类型要求已按 2.8 修正。
++- **PyG 版本**：仓库钉 2.5.3，SDAA 侧是 2.8.0.post1、CUDA 侧 2.6.1；`knn` 的 batch 索引类型要求已按 2.8 修正（2.6 同样接受整型）。
+ - `sample_main.py` 顶部的 `CUDA_LAUNCH_BLOCKING` / `CUDA_VISIBLE_DEVICES` 未改：torch 在其之前已 import，两个变量本就不生效。
++- 无官方评测脚本，本文的精度对照用的是仓库 `Generate.generate()` 自带的 `metrics.dir`（Validity / Unique / ring_size）。
+diff --git a/sdaa/logs/2026-10-26_dataset_sdaa.log b/sdaa/logs/2026-10-26_dataset_sdaa.log
+new file mode 100644
+index 0000000..f461c46
+--- /dev/null
++++ b/sdaa/logs/2026-10-26_dataset_sdaa.log
+@@ -0,0 +1,100 @@
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++--------------+--------------------------------------------
++ Host IP      | 10.71.123.51
++ PyTorch      | 2.12.0
++ Torch-SDAA   | 3.2.1
++--------------+--------------------------------------------
++ SDAA Driver  | 3.2.0 (N/A)
++ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
++ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
++ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
++ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
++ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
++ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
++ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
++--------------+--------------------------------------------
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++device=sdaa:0  cases=10  molecules/case=10  seed=1234
++warning: driver api and driver versions are different
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++model device: sdaa:0
++/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
++  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
++Invalid mol:  NC1=NC=NC1C1=CC=C2C=CC=C(O)C2=C1
++Invalid mol:  CC1=NC2=C(O)C(C3CC=CC=C3O)CC=C2CC1
++8
++8
++Validity: 0.8000
++Unique: 1.0000
++[ 1/10] 1bvr   valid=8/10 unique=8 heavy_atoms=18.5 wall=197.7s (19.77s/mol) peak=123.3MiB
++10
++10
++Validity: 1.0000
++Unique: 1.0000
++[ 2/10] 1u0f   valid=10/10 unique=10 heavy_atoms=17.6 wall=144.6s (14.46s/mol) peak=90.1MiB
++Invalid mol:  CC(C)CCC1=CC(C(=O)O)CC2NNN=C12
++9
++9
++Validity: 0.9000
++Unique: 1.0000
++[ 3/10] 1zyu   valid=9/10 unique=9 heavy_atoms=17.9 wall=185.8s (18.58s/mol) peak=123.1MiB
++Invalid mol:  CCCC(C=O)=CCC1NC=CC2C=CC=CC21
++9
++9
++Validity: 0.9000
++Unique: 1.0000
++[ 4/10] 2ah9   valid=9/10 unique=9 heavy_atoms=18.1 wall=233.4s (23.34s/mol) peak=153.6MiB
++Invalid mol:  COCC=CCCCCC=C1C=CC=C(C=O)C1
++Invalid mol:  CC=CC=CC=CC1C=CC=CC1=CCCC
++8
++8
++Validity: 0.8000
++Unique: 1.0000
++[ 5/10] 2ati   valid=8/10 unique=8 heavy_atoms=18.5 wall=153.9s (15.39s/mol) peak=97.9MiB
++Invalid mol:  C=CC=CC=CC1C=CC=C2C=CC3C=CCCC3C21
++Invalid mol:  C=CC=CCCCC1=CCC2CC(Cl)=CCC2=C1
++8
++8
++Validity: 0.8000
++Unique: 1.0000
++[ 6/10] 2hw1   valid=8/10 unique=8 heavy_atoms=18.4 wall=155.7s (15.57s/mol) peak=96.5MiB
++Invalid mol:  N=C1CC(=NC2CC(Br)=CC=C2Cl)C=C(Cl)C1Cl
++Invalid mol:  CC=CC1C=CC2C(O)=CC3=C(C=CC(Cl)=C3)C2C1
++Invalid mol:  C=CCNC1=CC(Cl)=C2C(Cl)=CC(Cl)=CC2=C1I
++7
++7
++Validity: 0.7000
++Unique: 1.0000
++[ 7/10] 4bnw   valid=7/10 unique=7 heavy_atoms=18.7 wall=171.7s (17.17s/mol) peak=107.7MiB
++Invalid mol:  C=CC=CCC(N)=NC1=CC2=C(C=CCC2)C=C1
++Invalid mol:  O=CC1=CC(C2=CC3=C(C=CCC3)C=C2)C=CC1
++8
++6
++Validity: 0.8000
++Unique: 0.7500
++[ 8/10] 4i91   valid=8/10 unique=6 heavy_atoms=9.1 wall=83.1s (8.31s/mol) peak=77.1MiB
++Invalid mol:  CC1CC2C3=C(C=CC(Cl)=C3)C(O)=C(O)C2C=C1Br
++Invalid mol:  C=CC1CC(Cl)=C(Cl)C2C=C3CNC=NC3=CC12
++Invalid mol:  CC1=CC2=C(C=C(Br)C(C3C=CC=CC3)=C2)C(=O)C1
++Invalid mol:  CC=CCCCC1C(=O)C=CC2=C1CC(C)C(CC)=C2
++Invalid mol:  NCC1=C(C2=CC=CCC2)C2CCC(Br)=CC2C=C1
++Invalid mol:  CC1=CC(C2=CC(Cl)=C(Cl)C=C2)=CC2=NC=CCC12
++4
++4
++Validity: 0.4000
++Unique: 1.0000
++[ 9/10] 5g3n   valid=4/10 unique=4 heavy_atoms=18.5 wall=144.9s (14.49s/mol) peak=87.3MiB
++Invalid mol:  CCC1=CC=C(C2=CC(Cl)=CC(Cl)=C2)C2C=CC=CC12
++9
++9
++Validity: 0.9000
++Unique: 1.0000
++[10/10] 5lvq   valid=9/10 unique=9 heavy_atoms=17.4 wall=142.2s (14.22s/mol) peak=80.0MiB
++
++--- dataset summary (sdaa:0) ---
++cases            : 10
++molecules        : 100 (valid 80, overall validity 0.8000)
++unique           : 78 (overall unique rate 0.9750)
++total wall       : 1613.0 s (16.13 s/molecule)
++peak mem (max)   : 153.6 MiB
++csv              : sdaa/scripts/results_dataset_sdaa.csv
+diff --git a/sdaa/logs/2026-10-26_dataset_sdaa30.log b/sdaa/logs/2026-10-26_dataset_sdaa30.log
+new file mode 100644
+index 0000000..4014684
+--- /dev/null
++++ b/sdaa/logs/2026-10-26_dataset_sdaa30.log
+@@ -0,0 +1,58 @@
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++--------------+--------------------------------------------
++ Host IP      | 10.71.123.51
++ PyTorch      | 2.12.0
++ Torch-SDAA   | 3.2.1
++--------------+--------------------------------------------
++ SDAA Driver  | 3.2.0 (N/A)
++ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
++ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
++ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
++ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
++ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
++ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
++ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
++--------------+--------------------------------------------
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++device=sdaa:0  cases=2  molecules/case=30  seed=1234
++warning: driver api and driver versions are different
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++model device: sdaa:0
++/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
++  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
++30
++30
++Validity: 1.0000
++Unique: 1.0000
++[ 1/ 2] 2ati   valid=30/30 unique=30 heavy_atoms=18.0 wall=478.7s (15.96s/mol) peak=98.1MiB
++Invalid mol:  ClC1=CC2=C(C=CC=C2)C(Cl)=N1
++Invalid mol:  CCC=CC1=C(C)C2C=C(Cl)C=CC2C=C1C
++Invalid mol:  BrC1=CC=CC2=C1C=CC1C=CC3C=CCCC3C21
++Invalid mol:  C=CC1=C(C)CC(C)C2=C1C=CC1=NC(=N)N=CC12
++Invalid mol:  CC1CC=CC2=C1CC(=CC1CC=CCC1C)C=C2
++Invalid mol:  FC(F)C1=CC2=C(C=C1)C1C=C(Cl)C=CC1C=C2
++Invalid mol:  CC1=CC2=C(C=CC3C=CC=CC23)C2C=C(Cl)C=CC12
++Invalid mol:  N=CCNC1=CC2=NCN=C(N)C2C(C=CC(=O)O)=C1
++Invalid mol:  CC1=NC(N=CNC(C)N)C2C=C(Br)CNC2=N1
++Invalid mol:  CC1=CCCC(C2C(=O)C=CC3=C2C=CC(Cl)=C3)=C1
++Invalid mol:  CCC1=C(OC)CC(C=C2CC=CC(Cl)C2)C=C1
++Invalid mol:  C=CC1=C(C)C2C(C=C1)C=NC1C=CC(Cl)CC12
++Invalid mol:  CC=CCC1=C(C=C2CC=CCC2N=O)C=CC(Cl)=C1
++Invalid mol:  CC1CC=CC2C=CC(C3=CC(Cl)=CCC3)=CC21
++Invalid mol:  CCC1=CC(Cl)C2C(=C1)C=CC1C=CC(Cl)=CC12
++Invalid mol:  C=CC1C=CC2C=CC(CC)C3CC=CC1=C23
++Invalid mol:  C1=CC2=CCC3=C(C=CC4C=CC=CC34)C2C=C1
++Invalid mol:  CCC1=CC2=C(C=C1)C1C=C(OC)C=CC1N=C2
++12
++12
++Validity: 0.4000
++Unique: 1.0000
++[ 2/ 2] 4bnw   valid=12/30 unique=12 heavy_atoms=18.2 wall=513.3s (17.11s/mol) peak=107.7MiB
++
++--- dataset summary (sdaa:0) ---
++cases            : 2
++molecules        : 60 (valid 42, overall validity 0.7000)
++unique           : 42 (overall unique rate 1.0000)
++total wall       : 992.0 s (16.53 s/molecule)
++peak mem (max)   : 107.7 MiB
++csv              : sdaa/scripts/results_dataset_sdaa30.csv
+diff --git a/sdaa/logs/2026-10-26_sample_main_sdaa.log b/sdaa/logs/2026-10-26_sample_main_sdaa.log
+new file mode 100644
+index 0000000..7959068
+--- /dev/null
++++ b/sdaa/logs/2026-10-26_sample_main_sdaa.log
+@@ -0,0 +1,35 @@
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++--------------+--------------------------------------------
++ Host IP      | 10.71.123.51
++ PyTorch      | 2.12.0
++ Torch-SDAA   | 3.2.1
++--------------+--------------------------------------------
++ SDAA Driver  | 3.2.0 (N/A)
++ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
++ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
++ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
++ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
++ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
++ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
++ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
++--------------+--------------------------------------------
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
++  n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
++/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
++  ix_class = int(re.search('\d+', p)[0]) - 1
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++Loading model ...
++warning: driver api and driver versions are different
++Generating molecules ...
++/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
++  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
++CCC(=O)Nc1c(O)ccc(-c2cccnc2)c1
++CCCCc1ccc(CNc2ccccc2)cc1
++CC=CCC=Cc1ncc(-c2ccc(CC)cc2)cc1
++CCC=CC1CCN(Sc2c(C)ccc(C)c2)CC1
++CC(C)COC(CO)C(C)CC=CC(=N)[PH](=O)O
++5
++5
++Validity: 1.0000
++Unique: 1.0000
+diff --git a/sdaa/scripts/bench_infer.py b/sdaa/scripts/bench_infer.py
+index c4ecf3b..bda0aaf 100644
+--- a/sdaa/scripts/bench_infer.py
++++ b/sdaa/scripts/bench_infer.py
+@@ -18,7 +18,9 @@ from rdkit import Chem, RDLogger
+ 
+ RDLogger.DisableLog("rdApp.*")
+ 
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++HERE = os.path.dirname(os.path.abspath(__file__))
++sys.path.insert(0, os.path.abspath(os.path.join(HERE, "..", "..")))
++sys.path.insert(0, HERE)
+ 
+ from EPMolGen import epmolgen, Generate  # noqa: E402
+ from EPMolGen.tools import *  # noqa: F401,F403,E402
+diff --git a/sdaa/scripts/eval_dataset.py b/sdaa/scripts/eval_dataset.py
+new file mode 100644
+index 0000000..11653e5
+--- /dev/null
++++ b/sdaa/scripts/eval_dataset.py
+@@ -0,0 +1,160 @@
++"""Dataset-level sampling statistics for EPMolGen (auxiliary script).
++
++Runs the repository's own sampling entry point (Generate.generate) on every
++pocket of a case directory and collects the metrics the repository itself
++computes (metrics.dir: Validity / Unique / ring_size).
++
++The same script runs on CUDA and on SDAA; with a fixed seed the generated
++SMILES lists can be compared across platforms.
++
++Usage:
++    python sdaa/scripts/eval_dataset.py --device sdaa:0 -n 10
++    python sdaa/scripts/eval_dataset.py --device cuda:0 -n 10
++"""
++
++import argparse
++import csv
++import os
++import re
++import sys
++import time
++
++import torch
++from rdkit import Chem, RDLogger
++
++RDLogger.DisableLog("rdApp.*")
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
++sys.path.insert(0, ROOT)
++sys.path.insert(0, HERE)
++
++from EPMolGen import epmolgen, Generate  # noqa: E402
++from bench_infer import ATOMIC_NUMBERS, build_complex, peak_mem, reset_peak  # noqa: E402
++
++
++def collect_cases(cases_dir):
++    cases = []
++    if "," in cases_dir:
++        for one in cases_dir.split(","):
++            cases.extend(collect_cases(one.strip()))
++        return cases
++    files = os.listdir(cases_dir)
++    direct_pdb = [f for f in files if f.endswith("_pocket10.pdb")]
++    direct_topo = [f for f in files if f.endswith("_topo.dict")]
++    if direct_pdb and direct_topo:
++        name = os.path.basename(os.path.normpath(cases_dir))
++        return [(name, os.path.join(cases_dir, direct_pdb[0]), os.path.join(cases_dir, direct_topo[0]))]
++    for name in sorted(files):
++        d = os.path.join(cases_dir, name)
++        if not os.path.isdir(d):
++            continue
++        files = os.listdir(d)
++        pdb = [f for f in files if f.endswith("_pocket10.pdb")]
++        topo = [f for f in files if f.endswith("_topo.dict")]
++        if pdb and topo:
++            cases.append((name, os.path.join(d, pdb[0]), os.path.join(d, topo[0])))
++    return cases
++
++
++def latest_dir(root, name):
++    d = os.path.join(root, name)
++    subs = sorted(os.path.join(d, x) for x in os.listdir(d))
++    return subs[-1] if subs else d
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--device", default="cuda:0")
++    ap.add_argument("-n", "--molecule_number", type=int, default=10)
++    ap.add_argument("--cases", default="./Ten_test_cases")
++    ap.add_argument("--ckpt", default="./model_ckpt.pt")
++    ap.add_argument("--root_path", default="gen_results_dataset")
++    ap.add_argument("--seed", type=int, default=1234)
++    ap.add_argument("--csv", default="")
++    args = ap.parse_args()
++
++    device = torch.device(args.device)
++    cases = collect_cases(args.cases)
++    print("device=%s  cases=%d  molecules/case=%d  seed=%d"
++          % (args.device, len(cases), args.molecule_number, args.seed), flush=True)
++
++    ckpt = torch.load(args.ckpt, map_location=device, weights_only=False)
++    model = epmolgen(ckpt["config"]).to(device)
++    model.load_state_dict(ckpt["model"])
++    print("model device: %s" % next(model.parameters()).device, flush=True)
++
++    rows = []
++    for idx, (name, pdb, topo) in enumerate(cases):
++        torch.manual_seed(args.seed + idx)
++        t0 = time.time()
++        cpx, graph_compose = build_complex(pdb, topo)
++        sample = Generate(
++            model, graph_compose.run, temperature=[1.0, 1.0], atom_type_map=ATOMIC_NUMBERS,
++            num_bond_type=4, num_atom_max=35, pivotal_threshold=0.5, max_double_in_6ring=0,
++            min_dist_inter_mol=3.0, bond_length_range=(1.0, 2.0), choose_max=1,
++            device=args.device,
++        )
++        reset_peak(device)
++        sample.generate(cpx, molecule_number=args.molecule_number, rec_name=name,
++                        print_SMILES=False, root_path=args.root_path)
++        wall = time.time() - t0
++
++        out_dir = latest_dir(args.root_path, name)
++        with open(os.path.join(out_dir, "metrics.dir")) as f:
++            raw = f.read()
++        # metrics.dir is a str(dict) whose ring_size block holds rdkit reprs -> not literal_eval-able
++        validity = float(re.search(r"'Validity':\s*([0-9.]+)", raw).group(1))
++        unique = float(re.search(r"'Unique':\s*([0-9.]+)", raw).group(1))
++        metrics = {"Validity": validity, "Unique": unique}
++        smi_path = os.path.join(out_dir, "generated.smi")
++        smiles = [s.strip() for s in open(smi_path)] if os.path.exists(smi_path) else []
++        heavy = []
++        for s in smiles:
++            m = Chem.MolFromSmiles(s)
++            if m is not None:
++                heavy.append(m.GetNumHeavyAtoms())
++
++        row = {
++            "case": name,
++            "requested": args.molecule_number,
++            "valid": int(round(metrics["Validity"] * args.molecule_number)),
++            "unique": int(round(metrics["Unique"] * max(metrics["Validity"] * args.molecule_number, 1))),
++            "validity": round(metrics["Validity"], 4),
++            "unique_rate": round(metrics["Unique"], 4),
++            "heavy_atoms_avg": round(sum(heavy) / len(heavy), 1) if heavy else 0,
++            "wall_s": round(wall, 1),
++            "s_per_mol": round(wall / args.molecule_number, 2),
++            "peak_mem_MiB": round(peak_mem(device) / 1024 ** 2, 1),
++            "out_dir": out_dir,
++        }
++        rows.append(row)
++        print("[%2d/%2d] %-6s valid=%d/%d unique=%d heavy_atoms=%.1f wall=%.1fs (%.2fs/mol) peak=%.1fMiB"
++              % (idx + 1, len(cases), name, row["valid"], row["requested"], row["unique"],
++                 row["heavy_atoms_avg"], row["wall_s"], row["s_per_mol"], row["peak_mem_MiB"]),
++              flush=True)
++
++    n = len(rows)
++    tot_valid = sum(r["valid"] for r in rows)
++    tot_req = sum(r["requested"] for r in rows)
++    tot_unique = sum(r["unique"] for r in rows)
++    tot_wall = sum(r["wall_s"] for r in rows)
++    print("\n--- dataset summary (%s) ---" % args.device)
++    print("cases            : %d" % n)
++    print("molecules        : %d (valid %d, overall validity %.4f)"
++          % (tot_req, tot_valid, tot_valid / tot_req))
++    print("unique           : %d (overall unique rate %.4f)" % (tot_unique, tot_unique / max(tot_valid, 1)))
++    print("total wall       : %.1f s (%.2f s/molecule)" % (tot_wall, tot_wall / tot_req))
++    print("peak mem (max)   : %.1f MiB" % max(r["peak_mem_MiB"] for r in rows))
++
++    csv_path = args.csv or os.path.join(HERE, "results_dataset_%s.csv"
++                                         % torch.device(args.device).type)
++    with open(csv_path, "w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
++        w.writeheader()
++        w.writerows(rows)
++    print("csv              : %s" % csv_path)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/sdaa/scripts/results_dataset_cuda.csv b/sdaa/scripts/results_dataset_cuda.csv
+new file mode 100644
+index 0000000..f550f87
+--- /dev/null
++++ b/sdaa/scripts/results_dataset_cuda.csv
+@@ -0,0 +1,11 @@
++case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
++1bvr,10,9,9,0.9,1.0,18.0,12.4,1.24,56.6,gen_results_dataset_cuda/1bvr/2026-10-26-11-28-20
++1u0f,10,10,10,1.0,1.0,18.5,11.8,1.18,45.0,gen_results_dataset_cuda/1u0f/2026-10-26-11-28-33
++1zyu,10,10,10,1.0,1.0,17.8,12.5,1.25,56.4,gen_results_dataset_cuda/1zyu/2026-10-26-11-28-44
++2ah9,10,7,7,0.7,1.0,18.3,15.9,1.59,68.1,gen_results_dataset_cuda/2ah9/2026-10-26-11-28-57
++2ati,10,4,4,0.4,1.0,18.0,12.5,1.25,47.7,gen_results_dataset_cuda/2ati/2026-10-26-11-29-13
++2hw1,10,7,7,0.7,1.0,17.7,12.0,1.2,46.6,gen_results_dataset_cuda/2hw1/2026-10-26-11-29-25
++4bnw,10,2,2,0.2,1.0,19.0,12.1,1.21,50.9,gen_results_dataset_cuda/4bnw/2026-10-26-11-29-37
++4i91,10,3,3,0.3,1.0,13.0,11.0,1.1,40.1,gen_results_dataset_cuda/4i91/2026-10-26-11-29-49
++5g3n,10,8,8,0.8,1.0,17.8,12.9,1.29,43.0,gen_results_dataset_cuda/5g3n/2026-10-26-11-30-00
++5lvq,10,8,8,0.8,1.0,17.9,11.5,1.15,40.7,gen_results_dataset_cuda/5lvq/2026-10-26-11-30-13
+diff --git a/sdaa/scripts/results_dataset_cuda30.csv b/sdaa/scripts/results_dataset_cuda30.csv
+new file mode 100644
+index 0000000..2515219
+--- /dev/null
++++ b/sdaa/scripts/results_dataset_cuda30.csv
+@@ -0,0 +1,3 @@
++case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
++2ati,30,23,23,0.7667,1.0,18.7,41.1,1.37,47.7,gen_results_dataset_cuda30/2ati/2026-10-26-11-52-00
++4bnw,30,13,13,0.4333,1.0,17.1,40.1,1.34,50.9,gen_results_dataset_cuda30/4bnw/2026-10-26-11-52-42
+diff --git a/sdaa/scripts/results_dataset_sdaa.csv b/sdaa/scripts/results_dataset_sdaa.csv
+new file mode 100644
+index 0000000..6d91fea
+--- /dev/null
++++ b/sdaa/scripts/results_dataset_sdaa.csv
+@@ -0,0 +1,11 @@
++case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
++1bvr,10,8,8,0.8,1.0,18.5,197.7,19.77,123.3,gen_results_dataset_sdaa/1bvr/2026-10-26-03-24-30
++1u0f,10,10,10,1.0,1.0,17.6,144.6,14.46,90.1,gen_results_dataset_sdaa/1u0f/2026-10-26-03-27-48
++1zyu,10,9,9,0.9,1.0,17.9,185.8,18.58,123.1,gen_results_dataset_sdaa/1zyu/2026-10-26-03-30-12
++2ah9,10,9,9,0.9,1.0,18.1,233.4,23.34,153.6,gen_results_dataset_sdaa/2ah9/2026-10-26-03-33-18
++2ati,10,8,8,0.8,1.0,18.5,153.9,15.39,97.9,gen_results_dataset_sdaa/2ati/2026-10-26-03-37-12
++2hw1,10,8,8,0.8,1.0,18.4,155.7,15.57,96.5,gen_results_dataset_sdaa/2hw1/2026-10-26-03-39-45
++4bnw,10,7,7,0.7,1.0,18.7,171.7,17.17,107.7,gen_results_dataset_sdaa/4bnw/2026-10-26-03-42-21
++4i91,10,8,6,0.8,0.75,9.1,83.1,8.31,77.1,gen_results_dataset_sdaa/4i91/2026-10-26-03-45-13
++5g3n,10,4,4,0.4,1.0,18.5,144.9,14.49,87.3,gen_results_dataset_sdaa/5g3n/2026-10-26-03-46-36
++5lvq,10,9,9,0.9,1.0,17.4,142.2,14.22,80.0,gen_results_dataset_sdaa/5lvq/2026-10-26-03-49-01
+diff --git a/sdaa/scripts/results_dataset_sdaa30.csv b/sdaa/scripts/results_dataset_sdaa30.csv
+new file mode 100644
+index 0000000..9bd0825
+--- /dev/null
++++ b/sdaa/scripts/results_dataset_sdaa30.csv
+@@ -0,0 +1,3 @@
++case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
++2ati,30,30,30,1.0,1.0,18.0,478.7,15.96,98.1,gen_results_dataset_sdaa30/2ati/2026-10-26-03-52-02
++4bnw,30,12,12,0.4,1.0,18.2,513.3,17.11,107.7,gen_results_dataset_sdaa30/4bnw/2026-10-26-04-00-01
+-- 
+2.41.0
+

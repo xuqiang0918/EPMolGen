@@ -1,0 +1,652 @@
+From e43225f09c2bfa0d11746f9038c15e2447bcc45e Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 14:10:10 +0800
+Subject: [PATCH 06/11] [sdaa-adapt] align RNG with CUDA
+ (TORCH_SDAA_ALIGN_NV_DEVICE=a100) and seed numpy for reproducible sampling
+
+---
+ sdaa/SDAA_ADAPTATION.md                     |  92 ++++++++++------
+ sdaa/logs/2026-10-26_dataset_sdaa_align.log | 115 ++++++++++++++++++++
+ sdaa/scripts/compare_smiles.py              |  44 ++++++++
+ sdaa/scripts/eval_dataset.py                |  19 ++++
+ sdaa/scripts/results_dataset_sdaa_align.csv |  11 ++
+ sdaa/scripts/smiles_cuda.txt                |  73 +++++++++++++
+ sdaa/scripts/smiles_cuda_run2.txt           |  73 +++++++++++++
+ sdaa/scripts/smiles_sdaa.txt                |  71 ++++++++++++
+ 8 files changed, 462 insertions(+), 36 deletions(-)
+ create mode 100644 sdaa/logs/2026-10-26_dataset_sdaa_align.log
+ create mode 100644 sdaa/scripts/compare_smiles.py
+ create mode 100644 sdaa/scripts/results_dataset_sdaa_align.csv
+ create mode 100644 sdaa/scripts/smiles_cuda.txt
+ create mode 100644 sdaa/scripts/smiles_cuda_run2.txt
+ create mode 100644 sdaa/scripts/smiles_sdaa.txt
+
+diff --git a/sdaa/SDAA_ADAPTATION.md b/sdaa/SDAA_ADAPTATION.md
+index 2202d9d..cbc1ee3 100644
+--- a/sdaa/SDAA_ADAPTATION.md
++++ b/sdaa/SDAA_ADAPTATION.md
+@@ -4,20 +4,43 @@
+ 
+ 官方推理脚本 `sample_main.py` 在 SDAA 上直接可跑，5 个生成分子全部有效（`Validity 1.0000` / `Unique 1.0000`）。
+ 
+-与 CUDA（A100）对照：SDAA 慢 **12.9×**（16.13 s/分子 对 1.25 s/分子），峰值显存 153.6 MiB 对 68.1 MiB，生成质量（仓库自带的 Validity / Unique）处于同一量级。
++与 CUDA（A100）对照：SDAA 慢 **13.2×**（16.53 s/分子 对 1.25 s/分子），峰值显存 152.6 MiB 对 68.1 MiB；生成质量一致——两边 Validity 0.71 对 0.73，逐分子相同率 42.3%。
+ 
+ 性能差距的主因不在卡算力：每加一个原子都要在 CPU 侧重建 KNN 图（`GraphCompose`，16 进程）+ RDKit 建分子，真正上卡的 forward 只有几百个节点；SDAA 与本机 CPU（27.1 s/分子）也基本同速。
+ 
++## 随机数对齐
++
++生成模型的对齐必须处理两处随机源，缺一不可：
++
++| 随机源 | 位置 | 处理 |
++| --- | --- | --- |
++| 设备端 uniform / normal | `torch.multinomial`、`torch.rand`、先验采样 | SDAA 侧设 `TORCH_SDAA_ALIGN_NV_DEVICE=a100`，与 CUDA 的 Philox 对齐 |
++| 主机端 numpy | `EPMolGen/sample.py:27` 的 `np.random.randint` 决定每个分子的原子数 | 评测脚本里按 case 调 `np.random.seed()` |
++
++**`TORCH_SDAA_ALIGN_NV_DEVICE=a100` 实测有效**（同一 seed=1234，`torch.manual_seed` 后取样）：
++
++| 取样 | SDAA 不对齐 | SDAA 对齐 a100 | CUDA (A100) |
++| --- | --- | --- | --- |
++| `torch.rand(16)` | 与 CUDA 完全不同 | **与 CUDA 逐位相同** | 基准 |
++| `torch.randn(16)` | 与 CUDA 完全不同 | 与 CUDA 相同（差在 float32 末位 ~1e-7） | 基准 |
++| `torch.randint(16)` | — | 与 CUDA **不同** | 基准 |
++| `torch.normal(16)` | — | 与 CUDA **不同**（SDAA 给的是 CUDA `randn(4,8)` 的前 16 个） | 基准 |
++
++即 uniform 路径对齐了，int64 与 `normal_` 路径没有。EPMolGen 的先验采样走 `torch.distributions.Normal`（即 `normal_`），`torch.multinomial` 消耗的均匀数序列也可能因此错位，这是跨平台仍有 42.3% 分子不一致的直接原因。
++
++**numpy 播种是必须的**：仓库代码从不播种 numpy，而每个分子的原子数就来自 `np.random.randint`，不播种则**同一平台两次运行都不可复现**。播种后实测：同一平台重跑两次，73 个分子 **100% 逐个相同**。
++
+ ## 环境
+ 
+ | 项 | SDAA 侧 | CUDA 对照侧 |
+ | --- | --- | --- |
+-| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） | 10.10.6.21（AMD EPYC 7453，A100-PCIE-40GB） |
++| 宿主 | 10.71.15.115（Loongson-3C6000/D，32 张 SDAA） | 10.10.6.21（AMD EPYC 7453，A100-PCIE-40GB，共享机） |
+ | 容器 | `sdaa`（镜像 `3.2.1-torch_sdaa3.2.1`） | 无（直接用宿主 conda env） |
+ | Python | `/home/py312/bin/python3`（3.12.13） | `anaconda3/envs/surf/bin/python`（3.10.21） |
+ | torch | 2.12.0 / Torch-SDAA 3.2.1 | 2.4.1+cu121 |
+ | 设备 | `sdaa:0`（单核组 16 GiB） | `cuda:0`（A100 40 GB） |
+ | 仓库 | `/data/application/xuqiang/EPMolGen`，分支 `adapt/sdaa` | `/data/application/xuqiang/EPMolGen_cuda`（同一份工作树） |
++| RNG | `TORCH_SDAA_ALIGN_NV_DEVICE=a100` | 默认（Philox） |
+ 
+ SDAA 侧依赖全部用容器自带，**未额外安装任何包**：`torch_scatter 2.1.2`、`torch_cluster 1.6.3`、`torch_sparse 0.6.18`、`pyg_lib 0.7.0`、`pymol`、`rdkit`，PyG 2.8.0.post1（仓库 `requirements.txt` 钉 2.5.3）。
+ 
+@@ -39,8 +62,9 @@ patch 归档在 `sdaa/patches/`，3 个 commit 按平台适配 / 通用修复分
+ ## 运行
+ 
+ ```bash
+-# SDAA
+-docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang sdaa bash -c \
++# SDAA（注意 RNG 对齐变量）
++docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang \
++  -e TORCH_SDAA_ALIGN_NV_DEVICE=a100 sdaa bash -c \
+   'source /opt/tecoai/setvars.sh; cd /data/application/xuqiang/EPMolGen && \
+    /home/py312/bin/python3 -u sample_main.py --device sdaa:0 --molecule_number 5'
+ 
+@@ -63,57 +87,53 @@ Validity: 1.0000
+ Unique: 1.0000
+ ```
+ 
+-CUDA 同样 5 个分子、`Validity 1.0000` / `Unique 1.0000`，耗时 13 s（SDAA 112 s）。采样为逐原子随机过程，未设随机种子，每次生成的分子不同。
++CUDA 同样 5 个分子、`Validity 1.0000` / `Unique 1.0000`，耗时 13 s（SDAA 112 s）。官方脚本不播种任何 RNG，每次运行结果都不同。
+ 
+ ## 性能与显存
+ 
+ | 指标 | SDAA | CUDA (A100) | 倍数 |
+ | --- | --- | --- | --- |
+ | 官方 CLI（5 分子，含准备与加载） | 112 s | 13 s | 8.6× |
+-| 生成阶段（`sdaa/scripts/bench_infer.py`，5 分子） | 22.9 s/分子 | 1.3 s/分子 | 17.6× |
+-| 数据集 10 口袋 × 10 分子 | 16.13 s/分子 | 1.25 s/分子 | 12.9× |
+-| 峰值显存（10 口袋最大） | 153.6 MiB | 68.1 MiB | 2.3× |
++| 数据集 10 口袋 × 10 分子 | 16.53 s/分子 | 1.25 s/分子 | 13.2× |
++| 峰值显存（10 口袋最大） | 152.6 MiB | 68.1 MiB | 2.2× |
+ | 同机 CPU 对照 | 27.1 s/分子 | — | — |
+ 
+-单分子耗时随原子数变化（SDAA 侧 10 原子 10.6 s、28 原子 30.1 s）。SDAA 相对本机 CPU 仅 1.18×，说明瓶颈在 CPU 侧。论文报告 RTX 4090 上 0.7 s/分子。
+-
+-## 精度
++CUDA 侧是共享机，耗时随宿主 CPU 负载变化：load 4.3 时 1.25 s/分子，load 79 时同一脚本 4.59 s/分子（GPU 利用率始终 0%，瓶颈全在 CPU 侧）。SDAA 侧是独占机。
+ 
+-生成是随机过程，没有预测值可对；两平台即使同种子也生成不同分子（RNG 实现不同），无法逐分子比对，只能做分布级统计。指标用仓库自己写的 `Generate.generate()`，即 `metrics.dir` 里的 Validity / Unique。
++单分子耗时随原子数变化（SDAA 侧 10 原子 10.6 s、28 原子 30.1 s）。SDAA 相对本机 CPU 仅 1.18×。论文报告 RTX 4090 上 0.7 s/分子。
+ 
+-数据集用仓库自带的 `Ten_test_cases`（10 个口袋），每个口袋生成 10 个分子，共 100 个：
++## 精度
+ 
+-| 口袋 | SDAA 有效 | CUDA 有效 | SDAA s/分子 | CUDA s/分子 | SDAA 峰值 MiB | CUDA 峰值 MiB |
+-| --- | --- | --- | --- | --- | --- | --- |
+-| 1bvr | 8/10 | 9/10 | 19.77 | 1.24 | 123.3 | 56.6 |
+-| 1u0f | 10/10 | 10/10 | 14.46 | 1.18 | 90.1 | 45.0 |
+-| 1zyu | 9/10 | 10/10 | 18.58 | 1.25 | 123.1 | 56.4 |
+-| 2ah9 | 9/10 | 7/10 | 23.34 | 1.59 | 153.6 | 68.1 |
+-| 2ati | 8/10 | 4/10 | 15.39 | 1.25 | 97.9 | 47.7 |
+-| 2hw1 | 8/10 | 7/10 | 15.57 | 1.20 | 96.5 | 46.6 |
+-| 4bnw | 7/10 | 2/10 | 17.17 | 1.21 | 107.7 | 50.9 |
+-| 4i91 | 8/10 | 3/10 | 8.31 | 1.10 | 77.1 | 40.1 |
+-| 5g3n | 4/10 | 8/10 | 14.49 | 1.29 | 87.3 | 43.0 |
+-| 5lvq | 9/10 | 8/10 | 14.22 | 1.15 | 80.0 | 40.7 |
+-| **合计** | **80/100（0.80）** | **68/100（0.68）** | **16.13** | **1.25** | **153.6** | **68.1** |
++数据集用仓库自带的 `Ten_test_cases`（10 个口袋），每个口袋 10 个分子共 100 个，seed 1234（`torch.manual_seed` + `np.random.seed`，逐 case 加索引），SDAA 侧开 RNG 对齐。指标用仓库自己写的 `Generate.generate()`，即 `metrics.dir` 里的 Validity / Unique。
+ 
+-Unique：SDAA 78/80（0.975）、CUDA 68/68（1.000）。
++| 口袋 | SDAA 有效 | CUDA 有效 | 逐分子相同 | SDAA s/分子 | CUDA s/分子 | SDAA 峰值 MiB | CUDA 峰值 MiB |
++| --- | --- | --- | --- | --- | --- | --- | --- |
++| 1bvr | 9/10 | 9/10 | 6/9 | 19.22 | 1.33 | 122.1 | 56.5 |
++| 1u0f | 10/10 | 10/10 | 7/10 | 14.98 | 1.13 | 89.1 | 45.0 |
++| 1zyu | 9/10 | 10/10 | 2/9 | 18.70 | 1.26 | 122.0 | 56.4 |
++| 2ah9 | 9/10 | 9/10 | 1/9 | 23.30 | 1.47 | 152.6 | 68.1 |
++| 2ati | 8/10 | 9/10 | 4/8 | 15.72 | 1.28 | 96.9 | 47.7 |
++| 2hw1 | 7/10 | 5/10 | 1/7 | 15.83 | 1.24 | 95.5 | 46.6 |
++| 4bnw | 2/10 | 3/10 | 2/2 | 17.89 | 1.41 | 106.7 | 50.9 |
++| 4i91 | 5/10 | 6/10 | 5/5 | 11.77 | 1.01 | 76.1 | 40.0 |
++| 5g3n | 4/10 | 4/10 | 0/4 | 14.26 | 1.14 | 86.2 | 42.9 |
++| 5lvq | 8/10 | 8/10 | 2/8 | 13.60 | 1.20 | 79.0 | 40.7 |
++| **合计** | **71/100（0.71）** | **73/100（0.73）** | **30/71（42.3%）** | **16.53** | **1.25** | **152.6** | **68.1** |
+ 
+-两个差异最大的口袋把样本加大到每案 30 个分子：
++Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
+ 
+-| 口袋 | SDAA | CUDA |
+-| --- | --- | --- |
+-| 2ati | 30/30（1.000） | 23/30（0.767） |
+-| 4bnw | 12/30（0.400） | 13/30（0.433） |
+-| 合计 | 42/60（0.700） | 36/60（0.600） |
++结论：
+ 
+-**判定**：n=10 时单个口袋的 Validity 自身波动就很大（同一口袋 CUDA 两次跑出 0.4 与 0.767）；n=30 时两平台差异方向不一致（2ati SDAA 高、4bnw SDAA 低）；n=100 的整体差 0.80 对 0.68 落在 1.4σ 内。因此**没有证据表明 SDAA 与 CUDA 存在系统性质量差异**，本次对照不足以判定更小的偏差。
++1. **总体质量一致**：Validity 0.71 对 0.73，差 2 个分子，逐案差 ≤2。残余差异来自两平台 `normal_` / `multinomial` 的随机流映射不同（见「随机数对齐」），不是数值精度问题。
++2. **可复现**：同一平台（CUDA）同种子重跑两次，73 个分子 100% 逐个相同；未播种 numpy 时连这一点都不成立。
++3. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
+ 
+-原始数据：`sdaa/scripts/results_dataset_sdaa.csv`、`results_dataset_sdaa30.csv`、`results_dataset_cuda.csv`、`results_dataset_cuda30.csv`；日志在 `sdaa/logs/`。
++原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`、`results_dataset_cuda_run2.csv`、`smiles_sdaa.txt`、`smiles_cuda.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`。
+ 
+ ## 已知限制
+ 
+-- **加速有限**：SDAA 比 CUDA 慢 12.9×，比本机 CPU 仅快 1.18×。要真正吃到加速需把逐分子串行改成批量生成（一次 forward 出 N 个候选），属采样逻辑改造，不是适配能解决的。
++- **加速有限**：SDAA 比 CUDA 慢 13.2×，比本机 CPU 仅快 1.18×。要真正吃到加速需把逐分子串行改成批量生成（一次 forward 出 N 个候选），属采样逻辑改造，不是适配能解决的。
++- **跨平台只做到 uniform 对齐**：`torch.randint` 与 `torch.normal` 的随机流两平台不同，逐分子一致率停在 42.3%；要再往上得改上游采样实现（先验采样避开 `Normal.rsample`、改用显式 uniform 组合）。
+ - **训练路径未适配**：`pretraining.py` / `finetuning.py` 里的 `torch.cuda.amp` 与硬编码 `cuda:0` 未动。
+ - **PyG 版本**：仓库钉 2.5.3，SDAA 侧是 2.8.0.post1、CUDA 侧 2.6.1；`knn` 的 batch 索引类型要求已按 2.8 修正（2.6 同样接受整型）。
+ - `sample_main.py` 顶部的 `CUDA_LAUNCH_BLOCKING` / `CUDA_VISIBLE_DEVICES` 未改：torch 在其之前已 import，两个变量本就不生效。
+diff --git a/sdaa/logs/2026-10-26_dataset_sdaa_align.log b/sdaa/logs/2026-10-26_dataset_sdaa_align.log
+new file mode 100644
+index 0000000..11cb981
+--- /dev/null
++++ b/sdaa/logs/2026-10-26_dataset_sdaa_align.log
+@@ -0,0 +1,115 @@
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++--------------+--------------------------------------------
++ Host IP      | 10.71.123.51
++ PyTorch      | 2.12.0
++ Torch-SDAA   | 3.2.1
++--------------+--------------------------------------------
++ SDAA Driver  | 3.2.0 (N/A)
++ SDAA Runtime | 3.2.0 (/opt/tecoai/lib64/libsdaart.so)
++ SDPTI        | 1.7.0 (/opt/tecoai/lib64/libsdpti.so)
++ TecoDNN      | 3.2.1 (/opt/tecoai/lib64/libtecodnn.so)
++ TecoBLAS     | 3.2.1 (/opt/tecoai/lib64/libtecoblas.so)
++ CustomDNN    | 3.2.1 (/opt/tecoai/lib64/libtecocustom.so)
++ TecoRAND     | 3.1.0 (/opt/tecoai/lib64/libtecorand.so)
++ TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
++--------------+--------------------------------------------
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
++  n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
++/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
++  ix_class = int(re.search('\d+', p)[0]) - 1
++device=sdaa:0  cases=10  molecules/case=10  seed=1234
++warning: driver api and driver versions are different
++Error in cpuinfo: processor architecture is not supported in cpuinfo
++model device: sdaa:0
++rng align_nv_device: True  (TORCH_SDAA_ALIGN_NV_DEVICE=a100)
++/home/py312/lib/python3.12/site-packages/torch/functional.py:505: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /softwares/pytorch/aten/src/ATen/native/TensorShape.cpp:4382.)
++  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
++Invalid mol:  CCCCC=C1C=C(C(N)=O)CC(C(C)C=CCl)C1
++9
++9
++Validity: 0.9000
++Unique: 1.0000
++[ 1/10] 1bvr   valid=9/10 unique=9 heavy_atoms=17.0 wall=192.2s (19.22s/mol) peak=122.1MiB
++10
++10
++Validity: 1.0000
++Unique: 1.0000
++[ 2/10] 1u0f   valid=10/10 unique=10 heavy_atoms=18.5 wall=149.8s (14.98s/mol) peak=89.1MiB
++Invalid mol:  NC1=NCC2C=C(O)C=C(NC(=O)CCO)C2C1
++9
++9
++Validity: 0.9000
++Unique: 1.0000
++[ 3/10] 1zyu   valid=9/10 unique=9 heavy_atoms=17.4 wall=187.0s (18.70s/mol) peak=122.0MiB
++Invalid mol:  CC1C=CC2C(C=CC3C2C=CC2C=CCCC23)C1
++9
++9
++Validity: 0.9000
++Unique: 1.0000
++[ 4/10] 2ah9   valid=9/10 unique=9 heavy_atoms=18.3 wall=233.0s (23.30s/mol) peak=152.6MiB
++Invalid mol:  C=C(C)C1=CC=CC(CC=CCCCN=O)C1=N
++Invalid mol:  CC=CC=C1C=CC(C2C=CC(C=CC)C=C2)=CC1
++8
++8
++Validity: 0.8000
++Unique: 1.0000
++[ 5/10] 2ati   valid=8/10 unique=8 heavy_atoms=17.9 wall=157.2s (15.72s/mol) peak=96.9MiB
++Invalid mol:  CCCN=C1C=C2C=CC3C=C(Cl)C=CC3C2C(=O)C1
++Invalid mol:  CC(=NC1CC=C(C(N)=O)CC1=N)C1CC=CC1C
++Invalid mol:  O=CCCCC=C1CC=CC2C=CC=CC12
++7
++7
++Validity: 0.7000
++Unique: 1.0000
++[ 6/10] 2hw1   valid=7/10 unique=7 heavy_atoms=18.3 wall=158.3s (15.83s/mol) peak=95.5MiB
++Invalid mol:  CC1=CC2C(=C(C3=CC=CC=C3)C=CC2C)CN1
++Invalid mol:  C=CC(C)C1C=NC2=C(C1)C(CCCC)=C(C)C=C2
++Invalid mol:  CC(=O)C1CCC2=C(C1)C(C(=O)O)C(=O)C(C)=N2
++Invalid mol:  C=C1CCC(C)C2=CC(C3=CC(Cl)=CC=C3)=CCC12
++Invalid mol:  NC(=O)CCNC(=O)C1=C(Br)C(N)=CC2C=CC=CC12
++Invalid mol:  CC=CC1=CC(C(=O)O)NC2C=CC(C(=O)O)CC12
++Invalid mol:  CCCCCC1=C(Cl)C=CC2=C1CCC(Cl)=C2CCC
++Invalid mol:  ClC1=CC2=C(C=C1)C1C3=CC=CCC3C=CC1C=C2
++2
++2
++Validity: 0.2000
++Unique: 1.0000
++[ 7/10] 4bnw   valid=2/10 unique=2 heavy_atoms=18.5 wall=178.9s (17.89s/mol) peak=106.7MiB
++Invalid mol:  CCCOC1=C(O)C(=O)CC2=C1C=C(Br)C(F)=C2
++Invalid mol:  OC1=CC(C2=CC3=C(C=C2)C=C(Cl)C=C3)=CC=C1
++Invalid mol:  C=CCCCCC1=CC=C2N=C(C)NCC2C1=O
++Invalid mol:  CCC(C)C(C)C1=CC=C2C=C(C(C)Br)C=CC2C1
++Invalid mol:  O=C1C=CC=C(C=C2C=CC3C=CC(Cl)=CC3N2)C1
++5
++5
++Validity: 0.5000
++Unique: 1.0000
++[ 8/10] 4i91   valid=5/10 unique=5 heavy_atoms=13.4 wall=117.7s (11.77s/mol) peak=76.1MiB
++Invalid mol:  CC1=C(C)C2CC=CC=C2C(CC2C=CC=CC2)N1
++Invalid mol:  N=CC1=C(N)C2C=CCC(C3=CC=CC=C3)C2C=C1
++Invalid mol:  C=CC(C)C1=CCCC2=C1C=C(CCC)N=C2
++Invalid mol:  CC1=C(O)C2C=C(I)CCC2C2=C1C=CC(Cl)=C2
++Invalid mol:  CCC1=CC2C(=C(C)C(C)C3C=CC=C(C)C23)C=C1
++Invalid mol:  CC=CC(=CC)C1C=C2CNN=C(N)C2=CC1=O
++4
++4
++Validity: 0.4000
++Unique: 1.0000
++[ 9/10] 5g3n   valid=4/10 unique=4 heavy_atoms=18.2 wall=142.6s (14.26s/mol) peak=86.2MiB
++Invalid mol:  CC1C=CC2C=CC(C3=CC=C(O)C=C3)C=C2C1
++Invalid mol:  CC1C=CC2=CC=CC(CC3=CC=C(Cl)CC3)C2C1
++8
++8
++Validity: 0.8000
++Unique: 1.0000
++[10/10] 5lvq   valid=8/10 unique=8 heavy_atoms=18.6 wall=136.0s (13.60s/mol) peak=79.0MiB
++
++--- dataset summary (sdaa:0) ---
++cases            : 10
++molecules        : 100 (valid 71, overall validity 0.7100)
++unique           : 71 (overall unique rate 1.0000)
++total wall       : 1652.7 s (16.53 s/molecule)
++peak mem (max)   : 152.6 MiB
++csv              : sdaa/scripts/results_dataset_sdaa_align.csv
++smiles           : /data/application/xuqiang/EPMolGen/sdaa/scripts/smiles_sdaa.txt (71 lines)
+diff --git a/sdaa/scripts/compare_smiles.py b/sdaa/scripts/compare_smiles.py
+new file mode 100644
+index 0000000..4a3a44e
+--- /dev/null
++++ b/sdaa/scripts/compare_smiles.py
+@@ -0,0 +1,44 @@
++"""Compare generated SMILES between two platforms (case<TAB>smiles lists).
++
++Usage:
++    python sdaa/scripts/compare_smiles.py sdaa/scripts/smiles_sdaa.txt sdaa/scripts/smiles_cuda.txt
++"""
++
++import os
++import sys
++from collections import defaultdict
++
++
++def load(path):
++    per_case = defaultdict(list)
++    with open(path) as f:
++        for line in f:
++            line = line.rstrip("\n")
++            if not line:
++                continue
++            case, smi = line.split("\t", 1)
++            per_case[case].append(smi)
++    return per_case
++
++
++def main():
++    a_path, b_path = sys.argv[1], sys.argv[2]
++    a, b = load(a_path), load(b_path)
++    cases = sorted(set(a) | set(b))
++    tot_same = tot_a = tot_b = 0
++    print("%-8s %6s %6s %6s %8s" % ("case", "A", "B", "same", "rate"))
++    for c in cases:
++        la, lb = a.get(c, []), b.get(c, [])
++        same = sum(1 for s in la if s in lb)
++        tot_same += same
++        tot_a += len(la)
++        tot_b += len(lb)
++        rate = same / max(len(la), 1)
++        print("%-8s %6d %6d %6d %7.1f%%" % (c, len(la), len(lb), same, rate * 100))
++    print("\nA = %s" % os.path.basename(a_path))
++    print("B = %s" % os.path.basename(b_path))
++    print("identical molecules: %d / %d (A) = %.1f%%" % (tot_same, tot_a, tot_same / max(tot_a, 1) * 100))
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/sdaa/scripts/eval_dataset.py b/sdaa/scripts/eval_dataset.py
+index 11653e5..399886f 100644
+--- a/sdaa/scripts/eval_dataset.py
++++ b/sdaa/scripts/eval_dataset.py
+@@ -19,6 +19,7 @@ import re
+ import sys
+ import time
+ 
++import numpy as np
+ import torch
+ from rdkit import Chem, RDLogger
+ 
+@@ -83,10 +84,21 @@ def main():
+     model = epmolgen(ckpt["config"]).to(device)
+     model.load_state_dict(ckpt["model"])
+     print("model device: %s" % next(model.parameters()).device, flush=True)
++    try:
++        import torch_sdaa
++        print("rng align_nv_device: %s  (TORCH_SDAA_ALIGN_NV_DEVICE=%s)"
++              % (torch_sdaa.backend.random.random_align_nv_device(),
++                 os.environ.get("TORCH_SDAA_ALIGN_NV_DEVICE")), flush=True)
++    except Exception:
++        pass
+ 
+     rows = []
++    smiles_all = []
+     for idx, (name, pdb, topo) in enumerate(cases):
+         torch.manual_seed(args.seed + idx)
++        # the per-molecule atom count comes from numpy's global RNG (EPMolGen/sample.py:27),
++        # so numpy has to be seeded as well, otherwise runs are not reproducible at all
++        np.random.seed(args.seed + idx)
+         t0 = time.time()
+         cpx, graph_compose = build_complex(pdb, topo)
+         sample = Generate(
+@@ -129,6 +141,8 @@ def main():
+             "out_dir": out_dir,
+         }
+         rows.append(row)
++        for s in smiles:
++            smiles_all.append("%s\t%s" % (name, s))
+         print("[%2d/%2d] %-6s valid=%d/%d unique=%d heavy_atoms=%.1f wall=%.1fs (%.2fs/mol) peak=%.1fMiB"
+               % (idx + 1, len(cases), name, row["valid"], row["requested"], row["unique"],
+                  row["heavy_atoms_avg"], row["wall_s"], row["s_per_mol"], row["peak_mem_MiB"]),
+@@ -155,6 +169,11 @@ def main():
+         w.writerows(rows)
+     print("csv              : %s" % csv_path)
+ 
++    smi_path = os.path.join(HERE, "smiles_%s.txt" % torch.device(args.device).type)
++    with open(smi_path, "w") as f:
++        f.write("\n".join(smiles_all) + "\n")
++    print("smiles           : %s (%d lines)" % (smi_path, len(smiles_all)))
++
+ 
+ if __name__ == "__main__":
+     main()
+diff --git a/sdaa/scripts/results_dataset_sdaa_align.csv b/sdaa/scripts/results_dataset_sdaa_align.csv
+new file mode 100644
+index 0000000..c5a9441
+--- /dev/null
++++ b/sdaa/scripts/results_dataset_sdaa_align.csv
+@@ -0,0 +1,11 @@
++case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
++1bvr,10,9,9,0.9,1.0,17.0,192.2,19.22,122.1,gen_results_dataset_sdaa_align/1bvr/2026-10-26-05-38-15
++1u0f,10,10,10,1.0,1.0,18.5,149.8,14.98,89.1,gen_results_dataset_sdaa_align/1u0f/2026-10-26-05-41-27
++1zyu,10,9,9,0.9,1.0,17.4,187.0,18.7,122.0,gen_results_dataset_sdaa_align/1zyu/2026-10-26-05-43-57
++2ah9,10,9,9,0.9,1.0,18.3,233.0,23.3,152.6,gen_results_dataset_sdaa_align/2ah9/2026-10-26-05-47-04
++2ati,10,8,8,0.8,1.0,17.9,157.2,15.72,96.9,gen_results_dataset_sdaa_align/2ati/2026-10-26-05-50-57
++2hw1,10,7,7,0.7,1.0,18.3,158.3,15.83,95.5,gen_results_dataset_sdaa_align/2hw1/2026-10-26-05-53-34
++4bnw,10,2,2,0.2,1.0,18.5,178.9,17.89,106.7,gen_results_dataset_sdaa_align/4bnw/2026-10-26-05-56-12
++4i91,10,5,5,0.5,1.0,13.4,117.7,11.77,76.1,gen_results_dataset_sdaa_align/4i91/2026-10-26-05-59-11
++5g3n,10,4,4,0.4,1.0,18.2,142.6,14.26,86.2,gen_results_dataset_sdaa_align/5g3n/2026-10-26-06-01-09
++5lvq,10,8,8,0.8,1.0,18.6,136.0,13.6,79.0,gen_results_dataset_sdaa_align/5lvq/2026-10-26-06-03-32
+diff --git a/sdaa/scripts/smiles_cuda.txt b/sdaa/scripts/smiles_cuda.txt
+new file mode 100644
+index 0000000..eb1786c
+--- /dev/null
++++ b/sdaa/scripts/smiles_cuda.txt
+@@ -0,0 +1,73 @@
++1bvr	O=Cc1cc(CCc2cc(N=CI)ccc2)ccc1
++1bvr	O=C1N=CC2C3CCC=CC=CC=CC(C3)C12
++1bvr	CC=Cc1ccccc1
++1bvr	CCCCC=CC=C(Cl)COCC1CCCNC1
++1bvr	CCC1CC(=O)c2c(ccc(NCC(C)O)c2)O1
++1bvr	CC(=CC=CCCC(=O)NCC(N)=O)CCC(N)=O
++1bvr	CCC=CC=CCCCNC(=O)CCC=CC(O)Cl
++1bvr	C=CC(=C)c1cc(C(=O)O)cc(CNC(=O)O)c1
++1bvr	CCCCOc1c(OC)ccc(C(N)=O)c1
++1u0f	O=C1C=CC2C(=O)C(C1)NCC1CCC(=O)C(=O)C12
++1u0f	CC(OCc1c(O)c(O)c(C(=O)O)cc1)C(=O)O
++1u0f	CCCOC1C(O)C(NCC(=O)O)C(=O)C(O)C1Cl
++1u0f	CC=CCCOC1CCC(=O)C(C(=O)CC(=O)O)C1
++1u0f	C=CC=CCOC1C(=O)C(C(=O)O)NC(N)C1Cl
++1u0f	O=C(O)CNC(Cc1cccc(O)c1)C(=O)O
++1u0f	COCCOC(=O)C1C(=O)C(N=O)CC(C(=O)O)C1O
++1u0f	N=CC1CCC2CC(C(=O)O)C(=O)C(=O)C2C1
++1u0f	CC(C)CC1CCCNC1Cc1c(Cl)ccc(O)c1
++1u0f	CCCc1c(C(=O)O)cc(C(=O)O)nc1SC(N)=O
++1zyu	CCCC1CCCC(COC(=O)C(=O)N=O)C1=O
++1zyu	CC(=O)Nc1cc(OCCCCCO)ccc1
++1zyu	CCCC(OC1C(=O)CCCC1C(C)N=O)C(=O)O
++1zyu	CCC(C)Nc1ccccc1COP(=O)(O)O
++1zyu	OCCCCOC1=CC(C(F)(F)F)OC(O)=C1
++1zyu	CC(CC=CN)Oc1cc2c(cc1)NC(=O)CO2
++1zyu	CC(Oc1ccccc1)C(CC(O)Cl)C(=O)O
++1zyu	N=CN=CCOc1c(C=CCI)ccnc1
++1zyu	CC(CO)CC=CC=CC(I)CC(Cl)CCC(=O)O
++1zyu	O=C1C(=O)C(C(=O)O)OC(C(=O)O[PH](=O)O)C1=O
++2ah9	CC1COC(C2CCCCC2)C(=O)C1C(Cl)C(=O)O
++2ah9	CC=CC=Cc1c2c(ncc1)C(C(C)C)CCC2C
++2ah9	CCCC=COC(CC(=O)O)c1ccccc1
++2ah9	NCCCCCc1ccc(-c2ccccc2)cc1
++2ah9	CCc1ccc(CC=CCc2ccccc2)cc1
++2ah9	CCC=Cc1cc(CN2CCCCCC2)ccc1
++2ah9	CCCCCCNC(=O)c1ccc(C[SH](N)N)cc1
++2ah9	C=CC=CCc1c(OC(=O)O)cc(C)c(CCl)c1
++2ah9	C=CC=CC(=C)c1cc(C)c(CCC[PH](=O)O)cc1
++2ati	CCC1=CC(C=CC(=O)O)C(=O)CC(=O)C1C(=O)O
++2ati	CCCCc1ccccc1CC=CC=CC(=O)O
++2ati	C=CC(=CC)c1cccc(CCCCCCC)c1
++2ati	Nc1cc(CC2CCc3ccccc3C2=O)ccc1
++2ati	O=C(O)c1cccc(C=CCc2ccccc2)c1
++2ati	C=CC(C)C(C)CCCc1cccc(C=CC)c1
++2ati	CC(C=O)Oc1cc(Cl)cc(CCCC(N)=O)c1
++2ati	O=C(Cl)CCCCCCCc1cc(C(=O)O)ccc1
++2ati	N=C(CCC(=O)O)C(=O)c1cc(Cl)cc(OC(=O)Cl)c1
++2hw1	CCC(C)=CCN1CCCc2c1cc(CSC)cc2
++2hw1	CCCNc1ccc(C(C)c2ccccc2)cc1
++2hw1	CC=CC=Cc1ccc(-c2cccc(Cl)c2)cc1
++2hw1	CCC=CC=Cc1cc(-c2ccccc2)ccc1
++2hw1	O=CCCCc1cc(-c2ccc(Cl)cc2)ccc1
++4bnw	CC=Cc1ccc(-c2c(C=CC)ccc(Cl)c2)cc1
++4bnw	C=CC=CCCCCC(C)c1cccc(OC)c1
++4bnw	CCCCc1cc(-c2cc(CC)c(CC)cc2)ccc1
++4i91	O=NCC1CCC(CC2CCCCC2)C(F)C1=O
++4i91	Fc1c(F)c(Br)c(F)c(Br)c1Cl
++4i91	CCC(C)Cc1ccc(-c2ccc(O)cc2)cc1
++4i91	O=C(O)CCC=Cc1ccc(-c2ccccc2)cc1
++4i91	CC=CC(=CC)c1ccc(-c2ccccc2)cc1
++4i91	N
++5g3n	C=C(CCCCC)c1cc(Cl)c(C(N)=O)cc1
++5g3n	CC(C=Cc1cc(-c2ccccc2)ccc1)[PH](=O)O
++5g3n	C=CC=Cc1ccccc1-c1cccc(C(=O)O)c1
++5g3n	C=C(C=C(C)Cl)c1ccc(-c2ccccc2)cc1
++5lvq	Cc1ccc(NCCCCCc2ccccc2)cc1
++5lvq	CC=CCCc1ccc(-c2ccc(Cl)cc2)cc1
++5lvq	CC(CC=CCc1cccc(Cl)c1)c1ccccc1
++5lvq	CCCc1cc(CC(=O)c2ccc(Cl)cc2)c(O)cc1
++5lvq	CCC(C=Cc1cccc(Cl)c1)c1ccccc1
++5lvq	CCc1ccc(C=Cc2cc(CN)ccc2)cc1
++5lvq	CCCCCCCOCC1CCC(CCI)CC1(N)O
++5lvq	Cc1cc(CCC(C)c2ccccc2)c(C)cc1
+diff --git a/sdaa/scripts/smiles_cuda_run2.txt b/sdaa/scripts/smiles_cuda_run2.txt
+new file mode 100644
+index 0000000..eb1786c
+--- /dev/null
++++ b/sdaa/scripts/smiles_cuda_run2.txt
+@@ -0,0 +1,73 @@
++1bvr	O=Cc1cc(CCc2cc(N=CI)ccc2)ccc1
++1bvr	O=C1N=CC2C3CCC=CC=CC=CC(C3)C12
++1bvr	CC=Cc1ccccc1
++1bvr	CCCCC=CC=C(Cl)COCC1CCCNC1
++1bvr	CCC1CC(=O)c2c(ccc(NCC(C)O)c2)O1
++1bvr	CC(=CC=CCCC(=O)NCC(N)=O)CCC(N)=O
++1bvr	CCC=CC=CCCCNC(=O)CCC=CC(O)Cl
++1bvr	C=CC(=C)c1cc(C(=O)O)cc(CNC(=O)O)c1
++1bvr	CCCCOc1c(OC)ccc(C(N)=O)c1
++1u0f	O=C1C=CC2C(=O)C(C1)NCC1CCC(=O)C(=O)C12
++1u0f	CC(OCc1c(O)c(O)c(C(=O)O)cc1)C(=O)O
++1u0f	CCCOC1C(O)C(NCC(=O)O)C(=O)C(O)C1Cl
++1u0f	CC=CCCOC1CCC(=O)C(C(=O)CC(=O)O)C1
++1u0f	C=CC=CCOC1C(=O)C(C(=O)O)NC(N)C1Cl
++1u0f	O=C(O)CNC(Cc1cccc(O)c1)C(=O)O
++1u0f	COCCOC(=O)C1C(=O)C(N=O)CC(C(=O)O)C1O
++1u0f	N=CC1CCC2CC(C(=O)O)C(=O)C(=O)C2C1
++1u0f	CC(C)CC1CCCNC1Cc1c(Cl)ccc(O)c1
++1u0f	CCCc1c(C(=O)O)cc(C(=O)O)nc1SC(N)=O
++1zyu	CCCC1CCCC(COC(=O)C(=O)N=O)C1=O
++1zyu	CC(=O)Nc1cc(OCCCCCO)ccc1
++1zyu	CCCC(OC1C(=O)CCCC1C(C)N=O)C(=O)O
++1zyu	CCC(C)Nc1ccccc1COP(=O)(O)O
++1zyu	OCCCCOC1=CC(C(F)(F)F)OC(O)=C1
++1zyu	CC(CC=CN)Oc1cc2c(cc1)NC(=O)CO2
++1zyu	CC(Oc1ccccc1)C(CC(O)Cl)C(=O)O
++1zyu	N=CN=CCOc1c(C=CCI)ccnc1
++1zyu	CC(CO)CC=CC=CC(I)CC(Cl)CCC(=O)O
++1zyu	O=C1C(=O)C(C(=O)O)OC(C(=O)O[PH](=O)O)C1=O
++2ah9	CC1COC(C2CCCCC2)C(=O)C1C(Cl)C(=O)O
++2ah9	CC=CC=Cc1c2c(ncc1)C(C(C)C)CCC2C
++2ah9	CCCC=COC(CC(=O)O)c1ccccc1
++2ah9	NCCCCCc1ccc(-c2ccccc2)cc1
++2ah9	CCc1ccc(CC=CCc2ccccc2)cc1
++2ah9	CCC=Cc1cc(CN2CCCCCC2)ccc1
++2ah9	CCCCCCNC(=O)c1ccc(C[SH](N)N)cc1
++2ah9	C=CC=CCc1c(OC(=O)O)cc(C)c(CCl)c1
++2ah9	C=CC=CC(=C)c1cc(C)c(CCC[PH](=O)O)cc1
++2ati	CCC1=CC(C=CC(=O)O)C(=O)CC(=O)C1C(=O)O
++2ati	CCCCc1ccccc1CC=CC=CC(=O)O
++2ati	C=CC(=CC)c1cccc(CCCCCCC)c1
++2ati	Nc1cc(CC2CCc3ccccc3C2=O)ccc1
++2ati	O=C(O)c1cccc(C=CCc2ccccc2)c1
++2ati	C=CC(C)C(C)CCCc1cccc(C=CC)c1
++2ati	CC(C=O)Oc1cc(Cl)cc(CCCC(N)=O)c1
++2ati	O=C(Cl)CCCCCCCc1cc(C(=O)O)ccc1
++2ati	N=C(CCC(=O)O)C(=O)c1cc(Cl)cc(OC(=O)Cl)c1
++2hw1	CCC(C)=CCN1CCCc2c1cc(CSC)cc2
++2hw1	CCCNc1ccc(C(C)c2ccccc2)cc1
++2hw1	CC=CC=Cc1ccc(-c2cccc(Cl)c2)cc1
++2hw1	CCC=CC=Cc1cc(-c2ccccc2)ccc1
++2hw1	O=CCCCc1cc(-c2ccc(Cl)cc2)ccc1
++4bnw	CC=Cc1ccc(-c2c(C=CC)ccc(Cl)c2)cc1
++4bnw	C=CC=CCCCCC(C)c1cccc(OC)c1
++4bnw	CCCCc1cc(-c2cc(CC)c(CC)cc2)ccc1
++4i91	O=NCC1CCC(CC2CCCCC2)C(F)C1=O
++4i91	Fc1c(F)c(Br)c(F)c(Br)c1Cl
++4i91	CCC(C)Cc1ccc(-c2ccc(O)cc2)cc1
++4i91	O=C(O)CCC=Cc1ccc(-c2ccccc2)cc1
++4i91	CC=CC(=CC)c1ccc(-c2ccccc2)cc1
++4i91	N
++5g3n	C=C(CCCCC)c1cc(Cl)c(C(N)=O)cc1
++5g3n	CC(C=Cc1cc(-c2ccccc2)ccc1)[PH](=O)O
++5g3n	C=CC=Cc1ccccc1-c1cccc(C(=O)O)c1
++5g3n	C=C(C=C(C)Cl)c1ccc(-c2ccccc2)cc1
++5lvq	Cc1ccc(NCCCCCc2ccccc2)cc1
++5lvq	CC=CCCc1ccc(-c2ccc(Cl)cc2)cc1
++5lvq	CC(CC=CCc1cccc(Cl)c1)c1ccccc1
++5lvq	CCCc1cc(CC(=O)c2ccc(Cl)cc2)c(O)cc1
++5lvq	CCC(C=Cc1cccc(Cl)c1)c1ccccc1
++5lvq	CCc1ccc(C=Cc2cc(CN)ccc2)cc1
++5lvq	CCCCCCCOCC1CCC(CCI)CC1(N)O
++5lvq	Cc1cc(CCC(C)c2ccccc2)c(C)cc1
+diff --git a/sdaa/scripts/smiles_sdaa.txt b/sdaa/scripts/smiles_sdaa.txt
+new file mode 100644
+index 0000000..910c8bb
+--- /dev/null
++++ b/sdaa/scripts/smiles_sdaa.txt
+@@ -0,0 +1,71 @@
++1bvr	FCc1cc(CCc2cc(N=CI)ccc2)ccc1
++1bvr	CCCCC(C)c1ccc(C=CC(C)C)cc1
++1bvr	CC=Cc1ccccc1
++1bvr	CCCCC=CC=C(Cl)COCC1CCCNC1
++1bvr	CCC1CC(=O)c2c(ccc(NCC(C)O)c2)O1
++1bvr	CC(=CC=CCCC(=O)NCC(N)=O)CCC(N)=O
++1bvr	CC=CCC=CCCCNC(=O)CCC=CC(O)Cl
++1bvr	C=CC(=C)c1cc(C(=O)O)cc(CNC(=O)O)c1
++1bvr	CCCCOc1c(OC)ccc(C(N)=O)c1
++1u0f	O=C1C=CC2C(=O)C(C1)NCC1CCC(=O)C(=O)C12
++1u0f	CC(OCc1c(O)c(O)c(C(=O)O)cc1)C(=O)O
++1u0f	C=CCOC1C(O)C(NCC(=O)O)C(=O)C(O)C1Cl
++1u0f	C=CC=CCOC1CCC(=O)C(C(=O)CC(=O)O)C1
++1u0f	C=CC=CCOC1C(=O)C(C(=O)O)NC(N)C1Cl
++1u0f	O=C(O)CNC(Cc1cccc(O)c1)C(=O)O
++1u0f	COCCOC(=O)C1C(=O)C(N=O)CC(C(=O)O)C1O
++1u0f	N=CC1CCC2CC(C(=O)O)C(=O)C(=O)C2C1
++1u0f	CC(C)CC1CCCNC1Cc1c(Cl)ccc(O)c1
++1u0f	CC=CCOC(=O)c1c(C)c(SC(N)=O)nc(C)c1
++1zyu	CCCC1CCCC(COC(=O)C(=O)N=O)C1=O
++1zyu	CC(=O)Nc1cc(OCCCCCO)ccc1
++1zyu	CCCC(OC1C(=O)CCCC1CN=O)C(=O)O
++1zyu	CC=C(C)OC(=O)C(C)OC1CCCCC1=O
++1zyu	CCOC1CC(C(=N)CNC(=O)O)CCC1=O
++1zyu	CCC=CC1C(=O)OC(=O)C(CP(=O)(O)O)C1=O
++1zyu	CN(CC=CCCCC(=O)O)C(=O)C(Cl)CO
++1zyu	C=CC(I)CCNC1C(=O)CC(Cl)CC1Cl
++1zyu	CCCC(COc1ccccc1C)OC(C)C(=O)Cl
++2ah9	CC1COC(C2CCCCC2)C(=O)C1C(Cl)C(=O)O
++2ah9	C=CC(C)Cc1ccc(C2CCC(Br)CC2=O)cc1
++2ah9	CC=C(CC)c1cccc2c1C(=O)CCC2=O
++2ah9	Cc1c(C(=O)O)ccc(C2CC(C)CNC2=O)n1
++2ah9	C=CC=CC=CC=CC(=C)C=CC=CC(C)C=C
++2ah9	COC(Cc1ccccc1)Cc1ccc(N)cc1
++2ah9	CC1CCCC(C=CCCCCc2ccccc2)C1
++2ah9	CCCc1c(Cc2ccccc2)ccc(C=O)c1
++2ah9	CCCCCCCCC(C=Cc1ccccc1)CC
++2ati	CCC1=CC(C=CC(=O)O)C(=O)CC(=O)C1C(=O)O
++2ati	CCCCc1ccccc1CC=CC=CC(=O)O
++2ati	C=CC(=CC)c1cccc(CCCCCCC)c1
++2ati	Nc1cc(CC2CCc3ccccc3C2=O)ccc1
++2ati	CCCc1cccc(C=CCc2ccccc2)c1
++2ati	C=C(C=CC=Cc1ccccc1)CC=CC=CC
++2ati	O=C(O)C1CC(Br)C(F)C(=O)C1=O
++2ati	C=Cc1c(CC)cc(CCC(C)c2ccccc2)nc1
++2hw1	CCC(C)=CCN1CCCc2c1cc(CSC)cc2
++2hw1	CCC=Cc1ccc(C(C)c2ccccc2)cc1
++2hw1	C=CC=Cc1c(-c2ccc(Cl)cc2)ccc(Cl)c1
++2hw1	C=CCC=CCC=CC=CCC(C)=CCC(C)C
++2hw1	Cc1c(C(Cl)C=Cc2ccccc2)ccc(Cl)c1
++2hw1	CCOCCOc1ccc(-c2ccccc2)cc1
++2hw1	C=C1CC(C=CCC=O)Cc2c1ccc(CCC)c2
++4bnw	CC=Cc1ccc(-c2c(C=CC)ccc(Cl)c2)cc1
++4bnw	C=CC=CCCCCC(C)c1cccc(OC)c1
++4i91	O=NCC1CCC(CC2CCCCC2)C(F)C1=O
++4i91	Fc1c(F)c(Br)c(F)c(Br)c1Cl
++4i91	CCC(C)Cc1ccc(-c2ccc(O)cc2)cc1
++4i91	CC=CC(=CC)c1ccc(-c2ccccc2)cc1
++4i91	N
++5g3n	Cc1cc(-c2ccccc2)cc(-c2ccccc2)c1
++5g3n	CCCc1ccccc1Nc1ncc(CCl)cc1
++5g3n	C=CC(I)c1c(Cl)cc(-c2ccccc2)cc1
++5g3n	C=Cc1c(C)ccc(C(C)Cc2ccc(O)cc2)c1
++5lvq	Cc1ccc(NCCCCCc2ccccc2)cc1
++5lvq	CCN1C=NC(c2cc(C3C=CC=N3)ccc2)=N1
++5lvq	Cc1ccc(CCCCCNc2ncc(Cl)cc2)cc1
++5lvq	C=C(C=CC=NC)C1=CN=C(CCCC=CC)C1
++5lvq	CCCCc1cc(Cc2ccc(C)cc2)ccc1
++5lvq	CC=CCCc1ccc(-c2ccc(C)cc2)cc1
++5lvq	CCCCCCCOCC1CCC(CCI)CC1(N)O
++5lvq	CC(CCc1c(N)ccc(Cl)c1)c1ccccc1
+-- 
+2.41.0
+

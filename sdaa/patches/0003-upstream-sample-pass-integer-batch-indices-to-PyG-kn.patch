@@ -1,8 +1,8 @@
 From 3d7f5e7f17da9a6689b9c25f1130c7011f48c4bd Mon Sep 17 00:00:00 2001
 From: xuqiang <00771xq@tecorigin.com>
 Date: Mon, 26 Oct 2026 11:06:24 +0800
-Subject: [PATCH 3/3] [upstream] sample: pass integer batch indices to PyG knn
- (required by PyG >= 2.8)
+Subject: [PATCH 03/11] [upstream] sample: pass integer batch indices to PyG
+ knn (required by PyG >= 2.8)
 
 ---
  EPMolGen/sample.py | 2 +-

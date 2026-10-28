@@ -1,0 +1,126 @@
+From 345abc82a8ef2181d6930f31700c0a10051f02be Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 14:10:43 +0800
+Subject: [PATCH 07/11] [sdaa-adapt] record aligned CUDA dataset result and
+ drop duplicate smiles file
+
+---
+ sdaa/SDAA_ADAPTATION.md                    |  2 +-
+ sdaa/scripts/results_dataset_cuda_run2.csv | 11 ++++
+ sdaa/scripts/smiles_cuda_run2.txt          | 73 ----------------------
+ 3 files changed, 12 insertions(+), 74 deletions(-)
+ create mode 100644 sdaa/scripts/results_dataset_cuda_run2.csv
+ delete mode 100644 sdaa/scripts/smiles_cuda_run2.txt
+
+diff --git a/sdaa/SDAA_ADAPTATION.md b/sdaa/SDAA_ADAPTATION.md
+index cbc1ee3..0b9d3e2 100644
+--- a/sdaa/SDAA_ADAPTATION.md
++++ b/sdaa/SDAA_ADAPTATION.md
+@@ -128,7 +128,7 @@ Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
+ 2. **可复现**：同一平台（CUDA）同种子重跑两次，73 个分子 100% 逐个相同；未播种 numpy 时连这一点都不成立。
+ 3. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
+ 
+-原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`、`results_dataset_cuda_run2.csv`、`smiles_sdaa.txt`、`smiles_cuda.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`。
++原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`（SDAA）、`results_dataset_cuda_run2.csv`（CUDA）、`smiles_sdaa.txt`、`smiles_cuda.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`。同目录下 `results_dataset_sdaa.csv` / `results_dataset_cuda.csv` / `*_30.csv` 是未对齐 RNG、未播种 numpy 的那轮旧数据，已作废，仅留档。
+ 
+ ## 已知限制
+ 
+diff --git a/sdaa/scripts/results_dataset_cuda_run2.csv b/sdaa/scripts/results_dataset_cuda_run2.csv
+new file mode 100644
+index 0000000..82f5074
+--- /dev/null
++++ b/sdaa/scripts/results_dataset_cuda_run2.csv
+@@ -0,0 +1,11 @@
++case,requested,valid,unique,validity,unique_rate,heavy_atoms_avg,wall_s,s_per_mol,peak_mem_MiB,out_dir
++1bvr,10,9,9,0.9,1.0,17.0,13.3,1.33,56.5,gen_results_dataset_cuda_run2/1bvr/2026-10-26-14-06-34
++1u0f,10,10,10,1.0,1.0,18.5,11.3,1.13,45.0,gen_results_dataset_cuda_run2/1u0f/2026-10-26-14-06-47
++1zyu,10,10,10,1.0,1.0,17.6,12.6,1.26,56.4,gen_results_dataset_cuda_run2/1zyu/2026-10-26-14-06-58
++2ah9,10,9,9,0.9,1.0,18.3,14.7,1.47,68.1,gen_results_dataset_cuda_run2/2ah9/2026-10-26-14-07-11
++2ati,10,9,9,0.9,1.0,18.6,12.8,1.28,47.7,gen_results_dataset_cuda_run2/2ati/2026-10-26-14-07-26
++2hw1,10,5,5,0.5,1.0,18.2,12.4,1.24,46.6,gen_results_dataset_cuda_run2/2hw1/2026-10-26-14-07-38
++4bnw,10,3,3,0.3,1.0,19.0,14.1,1.41,50.9,gen_results_dataset_cuda_run2/4bnw/2026-10-26-14-07-51
++4i91,10,6,6,0.6,1.0,14.3,10.1,1.01,40.0,gen_results_dataset_cuda_run2/4i91/2026-10-26-14-08-05
++5g3n,10,4,4,0.4,1.0,18.2,11.4,1.14,42.9,gen_results_dataset_cuda_run2/5g3n/2026-10-26-14-08-15
++5lvq,10,8,8,0.8,1.0,18.8,12.0,1.2,40.7,gen_results_dataset_cuda_run2/5lvq/2026-10-26-14-08-26
+diff --git a/sdaa/scripts/smiles_cuda_run2.txt b/sdaa/scripts/smiles_cuda_run2.txt
+deleted file mode 100644
+index eb1786c..0000000
+--- a/sdaa/scripts/smiles_cuda_run2.txt
++++ /dev/null
+@@ -1,73 +0,0 @@
+-1bvr	O=Cc1cc(CCc2cc(N=CI)ccc2)ccc1
+-1bvr	O=C1N=CC2C3CCC=CC=CC=CC(C3)C12
+-1bvr	CC=Cc1ccccc1
+-1bvr	CCCCC=CC=C(Cl)COCC1CCCNC1
+-1bvr	CCC1CC(=O)c2c(ccc(NCC(C)O)c2)O1
+-1bvr	CC(=CC=CCCC(=O)NCC(N)=O)CCC(N)=O
+-1bvr	CCC=CC=CCCCNC(=O)CCC=CC(O)Cl
+-1bvr	C=CC(=C)c1cc(C(=O)O)cc(CNC(=O)O)c1
+-1bvr	CCCCOc1c(OC)ccc(C(N)=O)c1
+-1u0f	O=C1C=CC2C(=O)C(C1)NCC1CCC(=O)C(=O)C12
+-1u0f	CC(OCc1c(O)c(O)c(C(=O)O)cc1)C(=O)O
+-1u0f	CCCOC1C(O)C(NCC(=O)O)C(=O)C(O)C1Cl
+-1u0f	CC=CCCOC1CCC(=O)C(C(=O)CC(=O)O)C1
+-1u0f	C=CC=CCOC1C(=O)C(C(=O)O)NC(N)C1Cl
+-1u0f	O=C(O)CNC(Cc1cccc(O)c1)C(=O)O
+-1u0f	COCCOC(=O)C1C(=O)C(N=O)CC(C(=O)O)C1O
+-1u0f	N=CC1CCC2CC(C(=O)O)C(=O)C(=O)C2C1
+-1u0f	CC(C)CC1CCCNC1Cc1c(Cl)ccc(O)c1
+-1u0f	CCCc1c(C(=O)O)cc(C(=O)O)nc1SC(N)=O
+-1zyu	CCCC1CCCC(COC(=O)C(=O)N=O)C1=O
+-1zyu	CC(=O)Nc1cc(OCCCCCO)ccc1
+-1zyu	CCCC(OC1C(=O)CCCC1C(C)N=O)C(=O)O
+-1zyu	CCC(C)Nc1ccccc1COP(=O)(O)O
+-1zyu	OCCCCOC1=CC(C(F)(F)F)OC(O)=C1
+-1zyu	CC(CC=CN)Oc1cc2c(cc1)NC(=O)CO2
+-1zyu	CC(Oc1ccccc1)C(CC(O)Cl)C(=O)O
+-1zyu	N=CN=CCOc1c(C=CCI)ccnc1
+-1zyu	CC(CO)CC=CC=CC(I)CC(Cl)CCC(=O)O
+-1zyu	O=C1C(=O)C(C(=O)O)OC(C(=O)O[PH](=O)O)C1=O
+-2ah9	CC1COC(C2CCCCC2)C(=O)C1C(Cl)C(=O)O
+-2ah9	CC=CC=Cc1c2c(ncc1)C(C(C)C)CCC2C
+-2ah9	CCCC=COC(CC(=O)O)c1ccccc1
+-2ah9	NCCCCCc1ccc(-c2ccccc2)cc1
+-2ah9	CCc1ccc(CC=CCc2ccccc2)cc1
+-2ah9	CCC=Cc1cc(CN2CCCCCC2)ccc1
+-2ah9	CCCCCCNC(=O)c1ccc(C[SH](N)N)cc1
+-2ah9	C=CC=CCc1c(OC(=O)O)cc(C)c(CCl)c1
+-2ah9	C=CC=CC(=C)c1cc(C)c(CCC[PH](=O)O)cc1
+-2ati	CCC1=CC(C=CC(=O)O)C(=O)CC(=O)C1C(=O)O
+-2ati	CCCCc1ccccc1CC=CC=CC(=O)O
+-2ati	C=CC(=CC)c1cccc(CCCCCCC)c1
+-2ati	Nc1cc(CC2CCc3ccccc3C2=O)ccc1
+-2ati	O=C(O)c1cccc(C=CCc2ccccc2)c1
+-2ati	C=CC(C)C(C)CCCc1cccc(C=CC)c1
+-2ati	CC(C=O)Oc1cc(Cl)cc(CCCC(N)=O)c1
+-2ati	O=C(Cl)CCCCCCCc1cc(C(=O)O)ccc1
+-2ati	N=C(CCC(=O)O)C(=O)c1cc(Cl)cc(OC(=O)Cl)c1
+-2hw1	CCC(C)=CCN1CCCc2c1cc(CSC)cc2
+-2hw1	CCCNc1ccc(C(C)c2ccccc2)cc1
+-2hw1	CC=CC=Cc1ccc(-c2cccc(Cl)c2)cc1
+-2hw1	CCC=CC=Cc1cc(-c2ccccc2)ccc1
+-2hw1	O=CCCCc1cc(-c2ccc(Cl)cc2)ccc1
+-4bnw	CC=Cc1ccc(-c2c(C=CC)ccc(Cl)c2)cc1
+-4bnw	C=CC=CCCCCC(C)c1cccc(OC)c1
+-4bnw	CCCCc1cc(-c2cc(CC)c(CC)cc2)ccc1
+-4i91	O=NCC1CCC(CC2CCCCC2)C(F)C1=O
+-4i91	Fc1c(F)c(Br)c(F)c(Br)c1Cl
+-4i91	CCC(C)Cc1ccc(-c2ccc(O)cc2)cc1
+-4i91	O=C(O)CCC=Cc1ccc(-c2ccccc2)cc1
+-4i91	CC=CC(=CC)c1ccc(-c2ccccc2)cc1
+-4i91	N
+-5g3n	C=C(CCCCC)c1cc(Cl)c(C(N)=O)cc1
+-5g3n	CC(C=Cc1cc(-c2ccccc2)ccc1)[PH](=O)O
+-5g3n	C=CC=Cc1ccccc1-c1cccc(C(=O)O)c1
+-5g3n	C=C(C=C(C)Cl)c1ccc(-c2ccccc2)cc1
+-5lvq	Cc1ccc(NCCCCCc2ccccc2)cc1
+-5lvq	CC=CCCc1ccc(-c2ccc(Cl)cc2)cc1
+-5lvq	CC(CC=CCc1cccc(Cl)c1)c1ccccc1
+-5lvq	CCCc1cc(CC(=O)c2ccc(Cl)cc2)c(O)cc1
+-5lvq	CCC(C=Cc1cccc(Cl)c1)c1ccccc1
+-5lvq	CCc1ccc(C=Cc2cc(CN)ccc2)cc1
+-5lvq	CCCCCCCOCC1CCC(CCI)CC1(N)O
+-5lvq	Cc1cc(CCC(C)c2ccccc2)c(C)cc1
+-- 
+2.41.0
+

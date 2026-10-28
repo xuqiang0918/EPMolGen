@@ -1,0 +1,36 @@
+From cee35a7a37179cd4e0db73f9d9b736424f3e4d3d Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 15:53:41 +0800
+Subject: [PATCH 11/11] [upstream] sample_tool: fix modify() crash on RDKit >=
+ 2025 (valence cache invalidated by bond surgery)
+
+---
+ EPMolGen/tools/sample_tool.py | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/EPMolGen/tools/sample_tool.py b/EPMolGen/tools/sample_tool.py
+index a895bc9..48ec120 100644
+--- a/EPMolGen/tools/sample_tool.py
++++ b/EPMolGen/tools/sample_tool.py
+@@ -358,7 +358,17 @@ def modify(mol, max_double_in_6ring=0):
+             continue
+         atoms = [mw.GetAtomWithIdx(i) for i in sub]
+         for a in atoms:
+-            if a.GetExplicitValence()==MAX_VALENCE[a.GetSymbol()] and a.GetHybridization().__str__()=='SP3':
++            # RDKit >= 2025 raises here when the bond surgery above invalidated the
++            # cached valence; recompute it and fall back to an undefined valence.
++            try:
++                valence = a.GetExplicitValence()
++            except RuntimeError:
++                try:
++                    a.UpdatePropertyCache(strict=False)
++                    valence = a.GetExplicitValence(allowUndefined=True)
++                except Exception:
++                    valence = -1
++            if valence==MAX_VALENCE[a.GetSymbol()] and a.GetHybridization().__str__()=='SP3':
+                 break
+         else:
+             bond_type = [mw.GetBondBetweenAtoms(*b).GetBondType().__str__() for b in bond_list]
+-- 
+2.41.0
+

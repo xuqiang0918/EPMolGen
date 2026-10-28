@@ -1,7 +1,7 @@
 From 4b92e1a9f6bc5c0fdb4d8de00c54b5f0aac76847 Mon Sep 17 00:00:00 2001
 From: xuqiang <00771xq@tecorigin.com>
 Date: Mon, 26 Oct 2026 11:06:23 +0800
-Subject: [PATCH 2/3] [sdaa-adapt] sample: replace cuda-only
+Subject: [PATCH 02/11] [sdaa-adapt] sample: replace cuda-only
  .cuda()/.to("cuda:0") with device-agnostic .to()
 
 ---

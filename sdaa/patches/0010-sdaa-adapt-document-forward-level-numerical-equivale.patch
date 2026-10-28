@@ -1,0 +1,74 @@
+From 1afd684cc0dafecab337a2b118be2d508fd791e8 Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 14:38:53 +0800
+Subject: [PATCH 10/11] [sdaa-adapt] document forward-level numerical
+ equivalence and chaos sensitivity
+
+---
+ sdaa/SDAA_ADAPTATION.md | 36 +++++++++++++++++++++++++++++++++---
+ 1 file changed, 33 insertions(+), 3 deletions(-)
+
+diff --git a/sdaa/SDAA_ADAPTATION.md b/sdaa/SDAA_ADAPTATION.md
+index a59397a..6fbcf18 100644
+--- a/sdaa/SDAA_ADAPTATION.md
++++ b/sdaa/SDAA_ADAPTATION.md
+@@ -122,6 +122,34 @@ CUDA 侧是共享机，耗时随宿主 CPU 负载变化：load 4.3 时 1.25 s/
+ 
+ Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
+ 
++### 数值对齐（前向级）
++
++端到端"逐分子一致率 42.3%"不是平台精度问题。用同一份输入、同��份权重做**确定性前向**对照（`sdaa/scripts/forward_check.py` + `compare_forward.py`，输出 `sdaa/forward_compare.txt`）：
++
++| 张量 | float32 最大绝对差 | float32 相对差 | float64 最大绝对差 | float64 相对差 |
++| --- | --- | --- | --- | --- |
++| 输入 `cpx_pos` / `cpx_feature` / `cpx_edge_index` | **0（逐比特相同）** | 0 | 0 | 0 |
++| `h_cpx`（embed_compose 输出） | 2.38e-07 | 8.5e-08 | 4.44e-16 | 1.6e-16 |
++| `h_enc`（encoder 输出） | 3.89e-05 | 5.9e-06 | 5.15e-13 | 7.7e-14 |
++| `pivotal_prob`（pivotal_net 输出） | 1.37e-06 | 1.4e-06 | 2.63e-14 | 2.6e-14 |
++| `pos_abs` / `pos_pi` / `pos_sigma`（pos_predictor） | ≤4.8e-07 | ≤9.1e-09 | ≤1.0e-14 | ≤1.4e-14 |
++
++float64 下两平台差到 1e-16（机器精度），**说明 SDAA 与 CUDA 的数值实现是等价的**；float32 下的 1e-6~1e-5 差异只是 fp32 在多层 encoder 上的舍入累积。
++
++### 为什么端到端只能对上 42.3%
++
++模型对 fp32 量级的扰动本身是混沌的。在**同一台 CUDA** 上把权重加 1e-5~1e-3 的绝对扰动、其余条件完全相同再跑一遍（`sdaa/scripts/chaos_check.py`，输出 `sdaa/chaos_check.txt`）：
++
++| 权重扰动 | 10 个分子里保持不变 |
++| --- | --- |
++| 1e-5 | 6 / 10 |
++| 1e-4 | 1 / 10 |
++| 1e-3 | 0 / 10 |
++
++而两平台之间的前向差异恰好就在 1e-5 这个量级。所以「同一套种子、两个数值等价的平台，只有 42% 的分子逐个相同」是模型自身的性质，不是平台缺陷；端到端逐分子一致率在这个模型上不是合适的精度指标。
++
++合适的指标是两条：**① 确定性前向的逐元素数值对照**（已给，等价到 1e-16）；**② 分布级质量统计**（下面两节：Validity/Unique 与理化描述符）。
++
+ ### 具体理化指标
+ 
+ 仓库只输出 Validity / Unique，没有官方评价脚本，故用 RDKit 标准描述符补一套（`sdaa/scripts/metrics_desc.py`，两平台分子在同一份 rdkit 上算，输出存 `sdaa/metrics_desc.txt`）：
+@@ -147,16 +175,18 @@ Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
+ 
+ 结论：
+ 
+-1. **总体质量一致**：Validity 0.71 对 0.73，差 2 个分子，逐案差 ≤2。残余差异来自两平台 `normal_` / `multinomial` 的随机流映射不同（见「随机数对齐」），不是数值精度问题。
++1. **总体质量一致**：Validity 0.71 对 0.73，差 2 个分子，逐案差 ≤2；12 项理化描述符的均值差全部落在 1σ 以内。
+ 2. **可复现**：同一平台（CUDA）同种子重跑两次，73 个分子 100% 逐个相同；未播种 numpy 时连这一点都不成立。
+-3. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
++3. **残余差异的来源已定位**：不是 RNG（抽样路径上 `rand` / `normal` / `multinomial` 逐值对齐），也不是平台数值（float64 下等价到 1e-16），而是模型在 fp32 噪声下的采样混沌（见上节：同平台 1e-5 权重扰动就有 4/10 分子变化）。
++4. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
+ 
+ 原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`（SDAA）、`results_dataset_cuda_run2.csv`（CUDA）、`smiles_sdaa.txt`、`smiles_cuda.txt`；指标输出 `sdaa/metrics_desc.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`、`sdaa/scripts/metrics_desc.py`。同目录下 `results_dataset_sdaa.csv` / `results_dataset_cuda.csv` / `*_30.csv` 是未对齐 RNG、未播种 numpy 的那轮旧数据，已作废，仅留档。
+ 
+ ## 已知限制
+ 
+ - **加速有限**：SDAA 比 CUDA 慢 13.2×，比本机 CPU 仅快 1.18×。要真正吃到加速需把逐分子串行改成批量生成（一次 forward 出 N 个候选），属采样逻辑改造，不是适配能解决的。
+-- **跨平台只做到 uniform 对齐**：`torch.randint` 与 `torch.normal` 的随机流两平台不同，逐分子一致率停在 42.3%；要再往上得改上游采样实现（先验采样避开 `Normal.rsample`、改用显式 uniform 组合）。
++- **跨平台只做到 uniform 对齐**：`torch.randint`（int64）两平台的随机流不同，不过推理路径不用它；`rand` / `normal` / `multinomial` 在抽样路径上逐值对齐。
++- **端到端逐分子一致率停在 42.3%**：模型对 fp32 噪声敏感所致（同平台 1e-5 权重扰动即改变 4/10 分子），不是平台缺陷；要做到端到端 100% 一致需让全流程在 float64 下运行，而采样中途的图重建会把 dtype 打回 float32，需要改上游 `transform` 逻辑。
+ - **训练路径未适配**：`pretraining.py` / `finetuning.py` 里的 `torch.cuda.amp` 与硬编码 `cuda:0` 未动。
+ - **PyG 版本**：仓库钉 2.5.3，SDAA 侧是 2.8.0.post1、CUDA 侧 2.6.1；`knn` 的 batch 索引类型要求已按 2.8 修正（2.6 同样接受整型）。
+ - `sample_main.py` 顶部的 `CUDA_LAUNCH_BLOCKING` / `CUDA_VISIBLE_DEVICES` 未改：torch 在其之前已 import，两个变量本就不生效。
+-- 
+2.41.0
+

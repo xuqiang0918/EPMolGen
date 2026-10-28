@@ -1,0 +1,238 @@
+From 51aa6a3d8eb23d63c6f015c83235fb78cb5b73b6 Mon Sep 17 00:00:00 2001
+From: xuqiang <00771xq@tecorigin.com>
+Date: Mon, 26 Oct 2026 14:18:03 +0800
+Subject: [PATCH 08/11] [sdaa-adapt] add RDKit descriptor metrics
+ (QED/SA/logP/TPSA/MW) for SDAA vs CUDA comparison
+
+---
+ sdaa/SDAA_ADAPTATION.md      |  25 ++++++-
+ sdaa/metrics_desc.txt        |  40 +++++++++++
+ sdaa/scripts/metrics_desc.py | 127 +++++++++++++++++++++++++++++++++++
+ 3 files changed, 191 insertions(+), 1 deletion(-)
+ create mode 100644 sdaa/metrics_desc.txt
+ create mode 100644 sdaa/scripts/metrics_desc.py
+
+diff --git a/sdaa/SDAA_ADAPTATION.md b/sdaa/SDAA_ADAPTATION.md
+index 0b9d3e2..a59397a 100644
+--- a/sdaa/SDAA_ADAPTATION.md
++++ b/sdaa/SDAA_ADAPTATION.md
+@@ -122,13 +122,36 @@ CUDA 侧是共享机，耗时随宿主 CPU 负载变化：load 4.3 时 1.25 s/
+ 
+ Unique：SDAA 71/71（1.000）、CUDA 73/73（1.000）。
+ 
++### 具体理化指标
++
++仓库只输出 Validity / Unique，没有官方评价脚本，故用 RDKit 标准描述符补一套（`sdaa/scripts/metrics_desc.py`，两平台分子在同一份 rdkit 上算，输出存 `sdaa/metrics_desc.txt`）：
++
++| 指标 | SDAA（71 个分子） | CUDA（73 个分子） | 差 |
++| --- | --- | --- | --- |
++| QED | 0.588 ± 0.165 | 0.616 ± 0.167 | −4.6% |
++| SA score | 3.101 ± 1.078 | 2.989 ± 1.109 | +3.7% |
++| logP (Crippen) | 3.336 ± 2.023 | 3.233 ± 1.919 | +3.2% |
++| TPSA | 41.12 ± 40.03 | 47.35 ± 40.77 | −13.2% |
++| MW | 258.4 ± 47.9 | 260.4 ± 47.3 | −0.8% |
++| 重原子数 | 17.70 ± 2.62 | 17.85 ± 2.54 | −0.8% |
++| HBD | 0.915 ± 1.118 | 1.164 ± 1.131 | −21.4% |
++| HBA | 2.085 ± 1.857 | 2.192 ± 1.920 | −4.9% |
++| 可旋转键 | 4.97 ± 2.37 | 5.06 ± 2.26 | −1.6% |
++| 环数 | 1.465 ± 0.734 | 1.466 ± 0.668 | −0.1% |
++| 芳香环数 | 0.986 ± 0.853 | 1.055 ± 0.780 | −6.5% |
++| Fsp3 | 0.400 ± 0.236 | 0.371 ± 0.236 | +8.0% |
++
++每一项的均值差都远小于自身标准差（QED 差 0.028 对 σ 0.165，SA 差 0.11 对 σ 1.08），**两平台生成分子的理化性质无实质差异**。
++
++仓库自带的环统计（`EPMolGen/tools/static_ring.py: substructure`）也一致：六元环占比 SDAA 0.887 / CUDA 0.918，五元环 0.028 / 0.014，七元环 0.028 / 0.041，八元环 0 / 0.014，SSSR 均为 1。
++
+ 结论：
+ 
+ 1. **总体质量一致**：Validity 0.71 对 0.73，差 2 个分子，逐案差 ≤2。残余差异来自两平台 `normal_` / `multinomial` 的随机流映射不同（见「随机数对齐」），不是数值精度问题。
+ 2. **可复现**：同一平台（CUDA）同种子重跑两次，73 个分子 100% 逐个相同；未播种 numpy 时连这一点都不成立。
+ 3. 未对齐 RNG、且不播种 numpy 的那轮旧数据（Validity 0.80 对 0.68）**不可复现，已作废**。
+ 
+-原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`（SDAA）、`results_dataset_cuda_run2.csv`（CUDA）、`smiles_sdaa.txt`、`smiles_cuda.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`。同目录下 `results_dataset_sdaa.csv` / `results_dataset_cuda.csv` / `*_30.csv` 是未对齐 RNG、未播种 numpy 的那轮旧数据，已作废，仅留档。
++原始数据：`sdaa/scripts/results_dataset_sdaa_align.csv`（SDAA）、`results_dataset_cuda_run2.csv`（CUDA）、`smiles_sdaa.txt`、`smiles_cuda.txt`；指标输出 `sdaa/metrics_desc.txt`；日志在 `sdaa/logs/`；比对脚本 `sdaa/scripts/compare_smiles.py`、`sdaa/scripts/metrics_desc.py`。同目录下 `results_dataset_sdaa.csv` / `results_dataset_cuda.csv` / `*_30.csv` 是未对齐 RNG、未播种 numpy 的那轮旧数据，已作废，仅留档。
+ 
+ ## 已知限制
+ 
+diff --git a/sdaa/metrics_desc.txt b/sdaa/metrics_desc.txt
+new file mode 100644
+index 0000000..1ebe74a
+--- /dev/null
++++ b/sdaa/metrics_desc.txt
+@@ -0,0 +1,40 @@
++sdaa: 71 molecules, 10 cases
++cuda: 73 molecules, 10 cases
++
++metric                     sdaa             cuda    diff%
++QED                0.588+-0.165     0.616+-0.167    -4.6%
++SA                 3.101+-1.078     2.989+-1.109     3.7%
++logP               3.336+-2.023     3.233+-1.919     3.2%
++TPSA             41.116+-40.025   47.354+-40.771   -13.2%
++MW              258.387+-47.907  260.412+-47.265    -0.8%
++heavy_atoms       17.704+-2.615    17.849+-2.542    -0.8%
++HBD                0.915+-1.118     1.164+-1.131   -21.4%
++HBA                2.085+-1.857     2.192+-1.920    -4.9%
++RotB               4.972+-2.366     5.055+-2.260    -1.6%
++rings              1.465+-0.734     1.466+-0.668    -0.1%
++arom_rings         0.986+-0.853     1.055+-0.780    -6.5%
++Fsp3               0.400+-0.236     0.371+-0.236     8.0%
++
++sdaa ring statistics (repository metric)
++  tri_ring         num=0    rate=0.000
++  qua_ring         num=0    rate=0.000
++  fif_ring         num=2    rate=0.028
++  hex_ring         num=63   rate=0.887
++  hep_ring         num=2    rate=0.028
++  oct_ring         num=0    rate=0.000
++  big_ring         num=0    rate=0.000
++  fused_ring       num=0    rate=0.000
++  unexpected_ring  num=0    rate=0.000
++  sssr             mean=1.00 max=1 (molecules with that SSSR size: 71)
++
++cuda ring statistics (repository metric)
++  tri_ring         num=0    rate=0.000
++  qua_ring         num=0    rate=0.000
++  fif_ring         num=1    rate=0.014
++  hex_ring         num=67   rate=0.918
++  hep_ring         num=3    rate=0.041
++  oct_ring         num=0    rate=0.000
++  big_ring         num=1    rate=0.014
++  fused_ring       num=0    rate=0.000
++  unexpected_ring  num=0    rate=0.000
++  sssr             mean=1.00 max=1 (molecules with that SSSR size: 73)
+diff --git a/sdaa/scripts/metrics_desc.py b/sdaa/scripts/metrics_desc.py
+new file mode 100644
+index 0000000..211b7d0
+--- /dev/null
++++ b/sdaa/scripts/metrics_desc.py
+@@ -0,0 +1,127 @@
++"""Concrete molecular descriptors for the generated molecules (auxiliary script).
++
++Reads the "case<TAB>smiles" files written by eval_dataset.py and reports
++standard RDKit drug-likeness descriptors plus the repository's own ring
++statistics (EPMolGen/tools/static_ring.py: substructure).
++
++Usage:
++    python sdaa/scripts/metrics_desc.py sdaa/scripts/smiles_sdaa.txt sdaa/scripts/smiles_cuda.txt
++"""
++
++import os
++import statistics
++import sys
++from collections import defaultdict
++
++from rdkit import Chem, RDLogger
++from rdkit.Chem import Crippen, Descriptors, Lipinski, QED, rdMolDescriptors
++
++RDLogger.DisableLog("rdApp.*")
++
++sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")))
++try:
++    from EPMolGen.tools.static_ring import substructure
++except Exception:
++    substructure = None
++
++try:
++    from rdkit.Chem import RDConfig
++    sys.path.append(os.path.join(RDConfig.RDContribDir, "SA_Score"))
++    from SA_Score import sascorer
++except Exception:
++    sascorer = None
++
++
++def load(path):
++    per_case = defaultdict(list)
++    with open(path) as f:
++        for line in f:
++            line = line.rstrip("\n")
++            if not line:
++                continue
++            case, smi = line.split("\t", 1)
++            per_case[case].append(smi)
++    return per_case
++
++
++def describe(mol):
++    d = {
++        "heavy_atoms": mol.GetNumHeavyAtoms(),
++        "MW": Descriptors.MolWt(mol),
++        "logP": Crippen.MolLogP(mol),
++        "TPSA": rdMolDescriptors.CalcTPSA(mol),
++        "HBD": Lipinski.NumHDonors(mol),
++        "HBA": Lipinski.NumHAcceptors(mol),
++        "RotB": Lipinski.NumRotatableBonds(mol),
++        "rings": Lipinski.RingCount(mol),
++        "arom_rings": Lipinski.NumAromaticRings(mol),
++        "Fsp3": rdMolDescriptors.CalcFractionCSP3(mol),
++        "QED": QED.qed(mol),
++    }
++    if sascorer is not None:
++        d["SA"] = sascorer.calculateScore(mol)
++    return d
++
++
++def main():
++    sides = [(os.path.basename(p).replace("smiles_", "").replace(".txt", ""), load(p))
++             for p in sys.argv[1:]]
++    keys = ["QED", "SA", "logP", "TPSA", "MW", "heavy_atoms", "HBD", "HBA", "RotB",
++            "rings", "arom_rings", "Fsp3"]
++
++    table = {}
++    for name, per_case in sides:
++        mols, rows = [], []
++        for case in sorted(per_case):
++            for smi in per_case[case]:
++                m = Chem.MolFromSmiles(smi)
++                if m is None:
++                    continue
++                mols.append(m)
++                r = describe(m)
++                r["case"] = case
++                r["smiles"] = smi
++                rows.append(r)
++        table[name] = (rows, mols)
++        print("%s: %d molecules, %d cases" % (name, len(rows), len(per_case)))
++
++    names = [n for n, _ in sides]
++    print("\n%-14s %16s %16s %8s" % ("metric", names[0], names[1] if len(names) > 1 else "-", "diff%"))
++    for k in keys:
++        vals, detail = [], []
++        for n in names:
++            v = [r[k] for r in table[n][0] if k in r]
++            if v:
++                vals.append(statistics.mean(v))
++                detail.append("%8.3f+-%.3f" % (statistics.mean(v), statistics.stdev(v) if len(v) > 1 else 0.0))
++            else:
++                vals.append(float("nan"))
++                detail.append("       n/a")
++        diff = (vals[0] - vals[1]) / vals[1] * 100 if len(vals) > 1 and vals[1] == vals[1] else float("nan")
++        if len(vals) > 1:
++            print("%-14s %16s %16s %7.1f%%" % (k, detail[0], detail[1], diff))
++        else:
++            print("%-14s %16s" % (k, detail[0]))
++
++    if substructure is not None:
++        for n in names:
++            rows, mols = table[n]
++            try:
++                stat = substructure([mols])
++            except Exception as e:
++                print("\n%s: ring statistics unavailable (%s)" % (n, e))
++                continue
++            rings = {k: v for k, v in stat.items() if k != "sssr"}
++            sssr = stat.get("sssr", {})
++            sssr_num = [v["num"] for v in sssr.values()] if isinstance(sssr, dict) else []
++            sssr_rate = [v["rate"] for v in sssr.values()] if isinstance(sssr, dict) else []
++            print("\n%s ring statistics (repository metric)" % n)
++            for k, v in rings.items():
++                print("  %-16s num=%-4s rate=%.3f" % (k, v.get("num"), v.get("rate", 0.0)))
++            if sssr_num:
++                print("  %-16s mean=%.2f max=%d (molecules with that SSSR size: %d)"
++                      % ("sssr", statistics.mean(sssr_num), max(sssr_num), len(sssr_num)))
++
++
++if __name__ == "__main__":
++    main()
+-- 
+2.41.0
+
