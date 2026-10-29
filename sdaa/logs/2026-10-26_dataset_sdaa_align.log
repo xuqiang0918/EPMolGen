@@ -14,9 +14,9 @@ Error in cpuinfo: processor architecture is not supported in cpuinfo
  TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
 --------------+--------------------------------------------
 Error in cpuinfo: processor architecture is not supported in cpuinfo
-/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
+/data/application/<user>/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
   n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
-/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
+/data/application/<user>/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
   ix_class = int(re.search('\d+', p)[0]) - 1
 device=sdaa:0  cases=10  molecules/case=10  seed=1234
 warning: driver api and driver versions are different
@@ -112,4 +112,4 @@ unique           : 71 (overall unique rate 1.0000)
 total wall       : 1652.7 s (16.53 s/molecule)
 peak mem (max)   : 152.6 MiB
 csv              : sdaa/scripts/results_dataset_sdaa_align.csv
-smiles           : /data/application/xuqiang/EPMolGen/sdaa/scripts/smiles_sdaa.txt (71 lines)
+smiles           : /data/application/<user>/EPMolGen/sdaa/scripts/smiles_sdaa.txt (71 lines)

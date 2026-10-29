@@ -27,7 +27,7 @@
 | Python | `/home/py312/bin/python3`（3.12.13）                   |
 | torch  | 2.12.0 / Torch-SDAA 3.2.1                            |
 | 设备     | `sdaa:0`（单核组 16 GiB）                                 |
-| 仓库     | `/data/application/xuqiang/EPMolGen`，分支 `adapt/sdaa` |
+| 仓库     | 仓库根目录（见「运行」中 `REPO` 变量），分支 `adapt/sdaa` |
 | RNG    | `TORCH_SDAA_ALIGN_NV_DEVICE=a100`                    |
 
 依赖全部用容器自带，未额外安装：`torch_scatter 2.1.2`、`torch_cluster 1.6.3`、`torch_sparse 0.6.18`、`pyg_lib 0.7.0`、PyG `2.8.0.post1`（仓库钉 2.5.3）、`rdkit`、`pymol`。
@@ -48,11 +48,12 @@ patch 归档在 `sdaa/patches/`，3 个 commit 按平台适配 / 通用修复分
 ## 运行
 
 ```bash
-# SDAA（注意 RNG 对齐变量）
-docker exec -u 1007:1007 -e USER=xuqiang -e HOME=/data/application/xuqiang \
+# SDAA（注意 RNG 对齐变量）；REPO 按实际克隆位置填写
+REPO=<EPMolGen 仓库根目录>
+docker exec -u 1007:1007 -e USER=<user> -e HOME=/tmp \
   -e TORCH_SDAA_ALIGN_NV_DEVICE=a100 sdaa bash -c \
-  'source /opt/tecoai/setvars.sh; cd /data/application/xuqiang/EPMolGen && \
-   /home/py312/bin/python3 -u sample_main.py --device sdaa:0 --molecule_number 5'
+  "source /opt/tecoai/setvars.sh; cd $REPO && \
+   /home/py312/bin/python3 -u sample_main.py --device sdaa:0 --molecule_number 5"
 ```
 
 SDAA 输出汇总（完整日志 `sdaa/logs/2026-10-26_sample_main_sdaa.log`；脚本会先打印 5 个生成分子的 SMILES，此处略）：

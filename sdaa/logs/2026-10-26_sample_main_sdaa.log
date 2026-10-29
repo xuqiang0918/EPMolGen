@@ -14,9 +14,9 @@ Error in cpuinfo: processor architecture is not supported in cpuinfo
  TCCL         | 3.2.0 (/opt/tecoai/lib64/libtccl.so)
 --------------+--------------------------------------------
 Error in cpuinfo: processor architecture is not supported in cpuinfo
-/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
+/data/application/<user>/EPMolGen/EPMolGen/tools/process_residues.py:43: SyntaxWarning: invalid escape sequence '\d'
   n_classes = [int(re.search('\d+', i)[0]) for i in table[1]]
-/data/application/xuqiang/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
+/data/application/<user>/EPMolGen/EPMolGen/tools/process_residues.py:51: SyntaxWarning: invalid escape sequence '\d'
   ix_class = int(re.search('\d+', p)[0]) - 1
 Error in cpuinfo: processor architecture is not supported in cpuinfo
 Loading model ...

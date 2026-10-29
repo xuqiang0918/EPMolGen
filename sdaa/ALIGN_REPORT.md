@@ -219,21 +219,25 @@ CUDA 同 seed 正常。即 **SDAA 上多卡并行生成不可用，只能在 `sd
 ## 4. 复现命令
 
 ```bash
-# 分布级对照 + 双噪声种子判定（6.21 上跑，两边分子同一 RDKit）
-cd /data/application/xuqiang/EPMolGen_cuda
-export PYTHONPATH=/data/application/xuqiang/pylibs_epmolgen
-/data/application/xuqiang/anaconda3/envs/surf/bin/python sdaa/scripts/align_verdict2.py \
+# 6.21 上跑，两边分子同一 RDKit；以下三个变量按实际位置填写
+CUDA_REPO=<EPMolGen_cuda 仓库根目录>
+export PYTHONPATH=<pylibs_epmolgen 目录>
+PY=<surf 环境的 python>
+cd $CUDA_REPO
+
+# 分布级对照 + 双噪声种子判定
+$PY sdaa/scripts/align_verdict2.py \
   --cuda  gen_results_dataset_cuda_50 \
   --sdaa  gen_results_dataset_sdaa_50 \
   --noise gen_results_dataset_cuda_seed50 gen_results_dataset_cuda_seed8888
 
 # 论文官方指标对照
-/data/application/xuqiang/anaconda3/envs/surf/bin/python sdaa/scripts/align_stats.py \
+$PY sdaa/scripts/align_stats.py \
   --ref gen_results_dataset_cuda_50 --test gen_results_dataset_sdaa_50
 
 # 对接
-export PATH=/data/application/xuqiang/pylibs_vina/openbabel/bin:$PATH
-/data/application/xuqiang/anaconda3/envs/surf/bin/python sdaa/scripts/docking_batch.py \
+export PATH=<openbabel bin 目录>:$PATH
+$PY sdaa/scripts/docking_batch.py \
   --root gen_results_dataset_sdaa_50 --cases Ten_test_cases --out-prefix results_dock_sdaa --limit 10
 ```
 
